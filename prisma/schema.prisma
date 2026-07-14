@@ -1,0 +1,177 @@
+// PayTrack schema — MySQL. Money is integer paise (BigInt).
+// See paytrack-handoff-spec.md §3 for the field-level rationale.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PAYER
+  REQUESTER
+}
+
+enum PayAccount {
+  PELISWAN
+  LEMOLITE
+  SHIVAM
+  ZENITH
+}
+
+enum Status {
+  REQUESTED
+  SCHEDULED
+  PAID
+  CONFIRMED
+  HOLD
+  CANCELLED
+}
+
+enum AttachmentKind {
+  INSTRUCTION
+  PROOF
+}
+
+enum EventType {
+  REQUEST
+  SCHEDULE
+  PAY
+  CONFIRM
+  HOLD
+  CANCEL
+  NUDGE
+  REMINDER
+  NOTE
+}
+
+model User {
+  id             String    @id @default(cuid())
+  name           String
+  email          String    @unique
+  role           Role
+  telegramChatId String?
+  passwordHash   String?
+  emailVerified  DateTime?
+  createdAt      DateTime  @default(now())
+
+  requested   Payment[]      @relation("requestedBy")
+  paid        Payment[]      @relation("paidBy")
+  confirmed   Payment[]      @relation("confirmedBy")
+  events      PaymentEvent[]
+  attachments Attachment[]
+
+  accounts Account[]
+  sessions Session[]
+}
+
+// ── Auth.js (NextAuth) adapter models ────────────────────────────────
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Payment {
+  id            String    @id @default(cuid())
+  amount        BigInt // integer paise
+  payee         String
+  payFrom       PayAccount
+  purpose       String     @db.Text
+  upi           String?
+  status        Status    @default(REQUESTED)
+  dueDate       DateTime
+  scheduledFor  DateTime?
+  paidAt        DateTime?
+  confirmedAt   DateTime?
+  lastRemindedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  requestedById String
+  requestedBy   User    @relation("requestedBy", fields: [requestedById], references: [id])
+  paidById      String?
+  paidBy        User?   @relation("paidBy", fields: [paidById], references: [id])
+  confirmedById String?
+  confirmedBy   User?   @relation("confirmedBy", fields: [confirmedById], references: [id])
+
+  attachments Attachment[]
+  events      PaymentEvent[]
+
+  @@index([status])
+  @@index([requestedById])
+  @@index([dueDate])
+}
+
+model Attachment {
+  id           String         @id @default(cuid())
+  paymentId    String
+  payment      Payment        @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  kind         AttachmentKind
+  originalName String
+  storedName   String         @unique
+  mimeType     String
+  size         Int
+  uploadedById String?
+  uploadedBy   User?          @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime       @default(now())
+
+  events PaymentEvent[]
+
+  @@index([paymentId])
+}
+
+model PaymentEvent {
+  id           String      @id @default(cuid())
+  paymentId    String
+  payment      Payment     @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  actorId      String?
+  actor        User?       @relation(fields: [actorId], references: [id])
+  type         EventType
+  message      String      @db.Text
+  attachmentId String?
+  attachment   Attachment? @relation(fields: [attachmentId], references: [id])
+  meta         Json?
+  createdAt    DateTime    @default(now())
+
+  @@index([paymentId, createdAt])
+}
+
+model IdempotencyKey {
+  key       String   @id
+  scope     String
+  createdAt DateTime @default(now())
+}

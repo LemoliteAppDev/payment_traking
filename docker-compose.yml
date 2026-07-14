@@ -1,0 +1,20 @@
+# Optional: run MySQL in Docker instead of Homebrew.
+# Local dev on this machine uses Homebrew MySQL (brew services start mysql).
+# If you prefer Docker:  docker compose up -d   then set
+#   DATABASE_URL="mysql://root:paytrack@localhost:3306/paytrack"
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: paytrack-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: paytrack
+      MYSQL_DATABASE: paytrack
+    ports:
+      - "3306:3306"
+    volumes:
+      - paytrack-mysql-data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+volumes:
+  paytrack-mysql-data:

@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>PayTrack — Go DinDin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EAEEF3; --surface:#FFFFFF; --surface-2:#F6F8FA; --surface-3:#F0F3F6;
+  --ink:#16202E; --ink-2:#5A6B7B; --ink-3:#94A3B2; --line:#E3E9EF; --line-2:#EDF1F5;
+  --brand:#0B7A6E; --brand-ink:#075C53; --brand-soft:#E1F3F0;
+  --paid:#12A150; --paid-soft:#E4F6EB;
+  --sched:#D6820A; --sched-soft:#FBF0DA;
+  --over:#DE3C3C; --over-soft:#FBE7E7;
+  --new:#2F6FED; --new-soft:#E6EEFD;
+  --hold:#7A6CE0; --hold-soft:#ECE9FB;
+  --shadow:0 1px 2px rgba(16,32,46,.04),0 8px 22px -12px rgba(16,32,46,.13);
+  --shadow-lg:0 22px 55px -20px rgba(16,32,46,.28);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:Inter,system-ui,sans-serif;font-size:13.5px;line-height:1.45;color:var(--ink);-webkit-font-smoothing:antialiased}
+.grotesk{font-family:'Space Grotesk',Inter,sans-serif;font-variant-numeric:tabular-nums}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+
+/* preview toggle */
+.preview{position:fixed;top:11px;left:50%;transform:translateX(-50%);z-index:200;display:flex;gap:4px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:4px;box-shadow:var(--shadow)}
+.preview button{font-size:12px;font-weight:600;color:var(--ink-2);padding:6px 15px;border-radius:999px;transition:.15s}
+.preview button.on{background:var(--ink);color:#fff}
+
+/* ---- shared component styles (compact) ---- */
+.screen{background:var(--bg);display:flex;flex-direction:column;min-height:0}
+.statusbar{display:none;height:38px;flex:none;align-items:flex-end;justify-content:space-between;padding:0 22px 5px;font-size:12.5px;font-weight:700;color:var(--ink)}
+.statusbar .icns{display:flex;align-items:center;gap:5px}
+.statusbar svg{width:15px;height:15px}
+
+.topbar{display:flex;align-items:center;gap:10px;padding:10px 15px;background:var(--surface);border-bottom:1px solid var(--line);flex:none}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;letter-spacing:-.01em}
+.logo .mark{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--brand),#0FA391);display:grid;place-items:center;color:#fff;font-family:'Space Grotesk';font-weight:700;font-size:13px}
+.logo small{font-weight:500;color:var(--ink-3);font-size:10px}
+.spacer{flex:1}
+.addbtn{display:none}
+.me{display:flex;align-items:center;gap:7px;padding:4px 8px 4px 4px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line)}
+.me .role{font-size:10.5px;color:var(--ink-3)}
+.avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:600;font-size:11px;flex:none}
+#userSel{border:none;background:none;font-weight:700;font-size:11.5px;color:var(--brand);cursor:pointer;padding:0}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;padding:9px 14px;border-radius:9px;transition:.15s}
+.btn svg{width:15px;height:15px}
+.btn-primary{background:var(--brand);color:#fff}.btn-primary:hover{background:var(--brand-ink)}
+.btn-ghost{background:var(--surface-2);color:var(--ink);border:1px solid var(--line)}
+.btn-paid{background:var(--paid);color:#fff}
+.btn-sched{background:var(--sched-soft);color:var(--sched);border:1px solid #F0DBB0}
+.btn-conf{background:var(--brand);color:#fff}
+
+/* 15-min reminder banner (payer) */
+.remind{display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--sched-soft);color:#8a5b08;border-bottom:1px solid #F0DBB0;padding:8px 15px;font-size:12px;font-weight:600;flex:none}
+.remind .cd{background:#fff;border:1px solid #EBC98A;border-radius:999px;padding:3px 9px;font-family:'Space Grotesk';font-size:11.5px;color:var(--sched);white-space:nowrap}
+
+.strip{display:grid;gap:9px;padding:11px 15px 3px;flex:none}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 13px;box-shadow:inset 3px 0 0 var(--ac,var(--brand))}
+.stat .top{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+.stat .sic{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-size:12px;line-height:1;flex:none}
+.stat .lab{font-size:11.5px;color:var(--ink-2);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat .val{font-size:21px;font-weight:700;letter-spacing:-.02em;line-height:1}
+.stat .sub{font-size:11px;color:var(--ink-3);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat .dot{width:8px;height:8px;border-radius:50%}
+/* swipe dots (phone only) */
+.dots{display:none}
+
+.body{flex:1;min-height:0}
+.listcol{display:flex;flex-direction:column;min-height:0}
+.search{padding:9px 13px 3px;position:relative;flex:none}
+.search svg{position:absolute;left:23px;top:16px;width:15px;height:15px;color:var(--ink-3);pointer-events:none}
+.search input{width:100%;border:1px solid var(--line);background:var(--surface-2);border-radius:9px;padding:9px 12px 9px 32px;font-family:inherit;font-size:13.5px;color:var(--ink)}
+.search input:focus{outline:none;border-color:var(--brand);background:#fff;box-shadow:0 0 0 3px var(--brand-soft)}
+.filters{display:flex;gap:6px;padding:9px 13px;overflow-x:auto;flex:none;scrollbar-width:none}
+.filters::-webkit-scrollbar{display:none}
+.chip-f{font-size:12.5px;font-weight:600;color:var(--ink-2);padding:7px 12px;border-radius:999px;white-space:nowrap;border:1px solid transparent}
+.chip-f.on{background:var(--ink);color:#fff}
+.chip-f.mine{border-color:var(--brand-soft)}
+.chip-f.mine.on{background:var(--brand)}
+.chip-f .n{opacity:.6;margin-left:3px;font-weight:500}
+
+.list{overflow-y:auto;flex:1;-webkit-overflow-scrolling:touch}
+.card{display:flex;gap:11px;padding:12px 14px;border-bottom:1px solid var(--line-2);cursor:pointer;position:relative;transition:.12s}
+.card:hover{background:var(--surface-2)}
+.card.sel{background:var(--brand-soft)}
+.card.sel:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--brand)}
+.card.flag:not(.sel){background:var(--paid-soft)}
+.card .av{width:38px;height:38px;border-radius:10px;flex:none;display:grid;place-items:center;color:#fff;font-weight:700;font-size:13px;font-family:'Space Grotesk'}
+.card .mid{flex:1;min-width:0}
+.card .row1{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.card .payee{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .amt{font-weight:700;font-size:15px;white-space:nowrap}
+.card .row2{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:5px}
+.card .meta{font-size:12.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px}
+.card .submeta{font-size:11.5px;color:var(--ink-3);margin-top:2px}
+.card .submeta b{color:var(--brand);font-weight:600}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap}
+.due{font-size:12px;font-weight:600}
+.flagline{margin-top:5px;font-size:12px;font-weight:700;color:var(--paid)}
+.st-paid{background:var(--paid-soft);color:var(--paid)}
+.st-sched{background:var(--sched-soft);color:var(--sched)}
+.st-over{background:var(--over-soft);color:var(--over)}
+.st-new{background:var(--new-soft);color:var(--new)}
+.st-hold{background:var(--hold-soft);color:var(--hold)}
+.st-confirmed{background:var(--paid-soft);color:var(--paid)}
+
+.mobbar{display:none;flex:none;padding:10px 13px calc(12px + env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--line)}
+.mobbar .btn{width:100%;font-size:14.5px;padding:13px}
+
+/* detail */
+.detailcol{min-height:0}
+.detail{display:flex;flex-direction:column;height:100%;min-height:0}
+.mobback{display:none;align-items:center;gap:8px;padding:12px 15px;border-bottom:1px solid var(--line-2);font-weight:700;font-size:14px;color:var(--ink);background:var(--surface);flex:none;width:100%;text-align:left}
+.mobback svg{width:19px;height:19px;color:var(--brand);flex:none}
+.dhead{padding:15px 16px;border-bottom:1px solid var(--line-2);display:flex;gap:11px;align-items:flex-start;flex:none;flex-wrap:wrap}
+.dhead .av{width:44px;height:44px;border-radius:12px;flex:none;display:grid;place-items:center;color:#fff;font-weight:700;font-size:16px;font-family:'Space Grotesk'}
+.dhead h2{font-size:17px;font-weight:700;letter-spacing:-.01em}
+.dhead .sub{font-size:12.5px;color:var(--ink-2);margin-top:2px}
+.dhead .amt{font-family:'Space Grotesk';font-size:22px;font-weight:700;letter-spacing:-.02em;margin-left:auto;text-align:right}
+.dhead .amt small{display:block;font-family:Inter;font-size:11px;color:var(--ink-3);font-weight:600;margin-top:2px}
+.frow{display:flex;gap:8px;flex-wrap:wrap;padding:11px 16px;border-bottom:1px solid var(--line-2);flex:none}
+.frow .cell{background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:7px 11px;font-size:11.5px;min-width:0}
+.frow .cell .k{color:var(--ink-3);font-weight:500;font-size:10.5px}
+.frow .cell .v{color:var(--ink);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thread{flex:1;overflow-y:auto;padding:16px;background:radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0) 0 0/22px 22px, var(--surface-2);-webkit-overflow-scrolling:touch}
+.tmsg{display:flex;gap:9px;margin-bottom:13px;max-width:82%}
+.tmsg .tav{width:28px;height:28px;border-radius:50%;flex:none;display:grid;place-items:center;color:#fff;font-weight:600;font-size:11px}
+.bubble{background:var(--surface);border:1px solid var(--line);border-radius:4px 12px 12px 12px;padding:9px 12px;box-shadow:var(--shadow)}
+.tmsg .who{font-size:12px;font-weight:700;margin-bottom:2px}
+.tmsg .txt{font-size:13.5px;color:var(--ink);line-height:1.5}
+.tmsg .time{font-size:10.5px;color:var(--ink-3);margin-top:4px;text-align:right}
+.tmsg.sys{max-width:100%;justify-content:center}
+.sysline{font-size:12px;color:var(--ink-2);background:var(--surface-3);border:1px solid var(--line);padding:6px 12px;border-radius:999px;display:inline-flex;gap:7px;align-items:center;font-weight:500}
+.sysline svg{width:14px;height:14px;flex:none}
+.att{margin-top:8px}
+.file{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:8px 11px;min-width:160px}
+.file .ic{width:28px;height:32px;border-radius:5px;flex:none;display:grid;place-items:center;color:#fff;font-size:8px;font-weight:700}
+.file .fn{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file .fs{font-size:11px;color:var(--ink-3)}
+.proofimg{margin-top:8px;width:150px;height:106px;border-radius:9px;border:1px solid var(--line);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:600;overflow:hidden}
+.proofimg span{position:relative;z-index:1;text-shadow:0 1px 3px rgba(0,0,0,.3)}
+.actions{padding:12px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface);display:flex;gap:9px;align-items:center;flex-wrap:wrap;flex:none}
+.actions .hint{font-size:12.5px;color:var(--ink-2);margin-right:auto;display:flex;align-items:flex-start;gap:6px;line-height:1.4}
+.actions .hint svg{width:16px;height:16px;color:var(--ink-3);flex:none;margin-top:1px}
+
+.empty{flex:1;display:grid;place-items:center;text-align:center;padding:36px;color:var(--ink-3)}
+.empty .big{width:56px;height:56px;border-radius:16px;background:var(--surface-2);border:1px solid var(--line);display:grid;place-items:center;margin:0 auto 14px}
+.empty h3{color:var(--ink);font-size:15px;margin-bottom:4px}
+.empty p{font-size:13px;max-width:250px;margin:0 auto}
+
+/* sheets/modals */
+.scrim{position:fixed;inset:0;background:rgba(16,32,46,.42);backdrop-filter:blur(2px);display:none;z-index:100}
+.scrim.on{display:flex}
+.modal{background:var(--surface);display:flex;flex-direction:column;box-shadow:var(--shadow-lg);overflow:hidden}
+@keyframes sheet{from{transform:translateY(100%)}}
+@keyframes pop{from{opacity:0;transform:translateY(8px) scale(.98)}}
+.mhead{padding:16px 18px 14px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;gap:10px;position:relative;flex:none}
+.mhead h3{font-size:16px;font-weight:700;flex:1}
+.x{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--ink-2);font-size:14px}
+.x:hover{background:var(--surface-2)}
+.mbody{padding:16px 18px;display:flex;flex-direction:column;gap:13px;overflow-y:auto;flex:1}
+.mbody>p{font-size:12.5px;color:var(--ink-2);line-height:1.5}
+.fld label{display:block;font-size:12.5px;font-weight:600;color:var(--ink-2);margin-bottom:6px}
+.fld input,.fld select,.fld textarea{width:100%;font-family:inherit;font-size:14.5px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);color:var(--ink)}
+.fld input:focus,.fld select:focus{outline:none;border-color:var(--brand);background:#fff;box-shadow:0 0 0 3px var(--brand-soft)}
+.fld .amtin{position:relative}
+.fld .amtin span{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--ink-3);font-weight:600}
+.fld .amtin input{padding-left:25px;font-family:'Space Grotesk';font-weight:600;font-size:16px}
+.amtwords{margin-top:7px;font-size:12.5px;color:var(--brand-ink);font-weight:600;min-height:16px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.qdrow{display:flex;gap:7px;margin-bottom:9px}
+.qd{flex:1;font-size:13px;font-weight:600;padding:10px 6px;border-radius:9px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2)}
+.qd.on{background:var(--sched-soft);border-color:#EBC98A;color:var(--sched)}
+.drop{border:1.5px dashed var(--line);border-radius:10px;padding:15px;text-align:center;color:var(--ink-3);font-size:12.5px;background:var(--surface-2)}
+.drop:hover{border-color:var(--brand);color:var(--brand)}
+.drop svg{width:20px;height:20px;margin-bottom:5px}
+.attached{display:flex;align-items:center;gap:8px;background:var(--brand-soft);border:1px solid #BEE6DF;border-radius:9px;padding:8px 11px;font-size:12.5px;font-weight:600;color:var(--brand-ink);margin-top:8px}
+.mfoot{padding:12px 18px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line-2);display:flex;gap:10px;justify-content:flex-end;flex:none}
+
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:11px 17px;border-radius:12px;font-size:13px;font-weight:500;display:flex;align-items:center;gap:9px;box-shadow:var(--shadow-lg);opacity:0;transition:.25s;z-index:120;pointer-events:none;max-width:86%}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast svg{width:16px;height:16px;color:#5FD39B;flex:none}
+
+/* ============================ WEB MODE ============================ */
+body.web{background:var(--bg);display:block;min-height:100vh}
+body.web .frame{max-width:1160px;margin:0 auto;height:100vh;padding:52px 16px 16px}
+body.web .screen{height:100%;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}
+body.web .statusbar{display:none}
+body.web .addbtn{display:inline-flex}
+body.web .strip{grid-template-columns:repeat(4,1fr);padding:13px 18px 5px}
+body.web .body{display:grid;grid-template-columns:334px 1fr;gap:13px;padding:11px 18px 18px;overflow:hidden}
+body.web .listcol{background:var(--surface);border:1px solid var(--line);border-radius:13px;overflow:hidden}
+body.web .detailcol{background:var(--surface);border:1px solid var(--line);border-radius:13px;overflow:hidden}
+body.web .thread{flex:1}
+body.web .scrim{align-items:center;justify-content:center;padding:20px}
+body.web .modal{max-width:440px;width:100%;max-height:90vh;border-radius:16px;animation:pop .18s ease}
+body.web .mhead::before{display:none}
+
+/* ============================ PHONE MODE ============================ */
+body.phone{background:radial-gradient(1000px 700px at 50% -12%, #e2e9f1, #c9d3de);display:grid;place-items:center;min-height:100dvh;padding:54px 18px 18px}
+body.phone .frame{width:min(392px,100vw);height:min(812px,calc(100dvh - 74px));background:#0c1420;border-radius:44px;padding:11px;position:relative;box-shadow:0 46px 84px -30px rgba(16,32,46,.5)}
+body.phone .frame:before{content:"";position:absolute;top:20px;left:50%;transform:translateX(-50%);width:104px;height:26px;background:#000;border-radius:14px;z-index:40}
+body.phone .screen{height:100%;border-radius:34px;overflow:hidden;position:relative}
+body.phone .statusbar{display:flex}
+body.phone .addbtn{display:none}
+body.phone .strip{display:flex;grid-template-columns:none;gap:9px;padding:11px 13px 0;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
+body.phone .strip::-webkit-scrollbar{display:none}
+body.phone .stat{flex:0 0 auto;width:134px;padding:11px 12px;scroll-snap-align:start;box-shadow:none;border-radius:13px}
+body.phone .stat .top{margin-bottom:8px;gap:7px}
+body.phone .stat .sic{width:24px;height:24px;font-size:13px;border-radius:8px}
+body.phone .stat .lab{font-size:12px}
+body.phone .stat .val{font-size:19px}
+body.phone .stat .sub{font-size:10.5px;margin-top:5px}
+body.phone .dots{display:flex;justify-content:center;gap:5px;padding:9px 0 2px;flex:none}
+.dots i{width:5px;height:5px;border-radius:50%;background:var(--line);transition:.22s ease}
+.dots i.on{background:var(--brand);width:15px;border-radius:3px}
+body.phone .body{display:block;position:relative;overflow:hidden}
+body.phone .listcol{position:absolute;inset:0;display:flex;flex-direction:column}
+body.phone .mobbar{display:block}
+body.phone .detailcol{position:absolute;inset:0;background:var(--surface);display:none}
+body.phone.viewing .detailcol{display:block}
+body.phone.viewing .listcol{display:none}
+body.phone.viewing .topbar,body.phone.viewing .strip,body.phone.viewing .remind{display:none}
+body.phone .mobback{display:flex}
+body.phone .actions{flex-direction:column;align-items:stretch;gap:9px}
+body.phone .actions .hint{order:-1;margin:0 0 2px}
+body.phone .actions .btn{width:100%;padding:14px;font-size:15px}
+body.phone .scrim{position:absolute;align-items:flex-end}
+body.phone .modal{width:100%;max-height:94%;border-radius:24px 24px 0 0;animation:sheet .24s cubic-bezier(.22,1,.36,1)}
+body.phone .mhead::before{content:"";position:absolute;top:7px;left:50%;transform:translateX(-50%);width:40px;height:4px;border-radius:2px;background:var(--line)}
+body.phone .mfoot .btn{flex:1}
+body.phone .toast{position:absolute;bottom:22px}
+</style>
+</head>
+<body class="web">
+
+<div class="preview">
+  <button id="tabWeb" onclick="setMode('web')">🖥 Web</button>
+  <button id="tabPhone" onclick="setMode('phone')">📱 Phone</button>
+</div>
+
+<div class="frame">
+  <div class="screen">
+
+    <div class="statusbar">
+      <span>9:41</span>
+      <span class="icns">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2 16h3v4H2zM7 12h3v8H7zM12 8h3v12h-3zM17 4h3v16h-3z"/></svg>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 6C8 6 4.5 8 2.5 11L12 19l9.5-8C19.5 8 16 6 12 6z"/></svg>
+        <svg viewBox="0 0 26 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="7" width="19" height="10" rx="2.5"/><rect x="3.5" y="9" width="14" height="6" rx="1" fill="currentColor" stroke="none"/><rect x="21.5" y="10" width="2" height="4" rx="1" fill="currentColor" stroke="none"/></svg>
+      </span>
+    </div>
+
+    <header class="topbar">
+      <div class="logo"><div class="mark">₹</div><div>PayTrack <small style="display:block">Go DinDin</small></div></div>
+      <div class="spacer"></div>
+      <button class="btn btn-primary addbtn" onclick="openNew()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Add a payment
+      </button>
+      <div class="me">
+        <div class="avatar" id="meAv" style="background:#0B7A6E">AM</div>
+        <div>
+          <div style="font-weight:600;font-size:11.5px;display:flex;align-items:center;gap:3px">as
+            <select id="userSel" onchange="switchUser(this.value)"><option>Amit</option><option>Priya</option><option>Rahul</option><option>Sneha</option></select>
+          </div>
+          <div class="role" id="meRole">You pay the bills</div>
+        </div>
+      </div>
+    </header>
+
+    <div class="remind" id="remind"></div>
+    <section class="strip" id="strip"></section>
+    <div class="dots" id="stripDots"><i></i><i></i><i></i><i></i></div>
+
+    <div class="body">
+      <div class="listcol">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+          <input id="q" oninput="setSearch(this.value)" placeholder="Search payee, purpose, amount…">
+        </div>
+        <div class="filters" id="filters"></div>
+        <div class="list" id="list"></div>
+        <div class="mobbar"><button class="btn btn-primary" onclick="openNew()">＋ Add a payment</button></div>
+      </div>
+      <div class="detailcol"><div class="detail" id="detail"></div></div>
+    </div>
+
+    <!-- NEW -->
+    <div class="scrim" id="newScrim">
+      <div class="modal">
+        <div class="mhead"><h3>Add a payment</h3><div style="flex:1"></div><button class="x" onclick="closeNew()">✕</button></div>
+        <div class="mbody">
+          <div class="two">
+            <div class="fld"><label>How much?</label><div class="amtin"><span>₹</span><input id="n_amt" type="text" inputmode="numeric" placeholder="45,000" oninput="fmtAmt(this)"></div></div>
+            <div class="fld"><label>Pay before</label><input id="n_due" type="date"></div>
+          </div>
+          <div class="amtwords" id="n_amt_words"></div>
+          <div class="two">
+            <div class="fld"><label>Pay from</label><select id="n_from"><option>Peliswan</option><option>Lemolite</option><option>Shivam</option><option>Zenith</option></select></div>
+            <div class="fld"><label>Their UPI or bank <span style="color:var(--ink-3);font-weight:500">(optional)</span></label><input id="n_upi" placeholder="name@upi"></div>
+          </div>
+          <div class="fld"><label>Pay who?</label><input id="n_payee" placeholder="Shop or person name"></div>
+          <div class="fld"><label>What is this for?</label><input id="n_purpose" placeholder="e.g. Diwali advert pictures"></div>
+          <div class="fld">
+            <label>Add a photo or bill</label>
+            <div class="drop" onclick="fakeAttach('new')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+              <div>Tap to add a bill, screenshot, or PDF</div>
+            </div>
+            <div id="n_attached"></div>
+          </div>
+        </div>
+        <div class="mfoot">
+          <button class="btn btn-ghost" onclick="closeNew()">Cancel</button>
+          <button class="btn btn-primary" onclick="submitNew()">Add payment</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCHEDULE -->
+    <div class="scrim" id="schedScrim">
+      <div class="modal">
+        <div class="mhead"><h3>Pick a day to pay</h3><div style="flex:1"></div><button class="x" onclick="closeSched()">✕</button></div>
+        <div class="mbody">
+          <p>Choose the day you will pay. The app reminds you — and the person who asked — so it isn't forgotten.</p>
+          <div class="fld">
+            <label>I will pay on…</label>
+            <div class="qdrow">
+              <button class="qd" onclick="quickDate('s_date',0,this)">Today</button>
+              <button class="qd" onclick="quickDate('s_date',1,this)">Tomorrow</button>
+              <button class="qd" onclick="quickDate('s_date',7,this)">Next week</button>
+            </div>
+            <input id="s_date" type="date">
+          </div>
+        </div>
+        <div class="mfoot">
+          <button class="btn btn-ghost" onclick="closeSched()">Cancel</button>
+          <button class="btn btn-sched" onclick="confirmSched()">Save this day</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PAID -->
+    <div class="scrim" id="paidScrim">
+      <div class="modal">
+        <div class="mhead"><h3>I paid this</h3><div style="flex:1"></div><button class="x" onclick="closePaid()">✕</button></div>
+        <div class="mbody">
+          <p>Add a picture that shows you paid — a screenshot or receipt. This is how everyone knows it's really done.</p>
+          <div class="fld">
+            <label>Add proof of payment</label>
+            <div class="drop" onclick="fakeAttach('proof')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+              <div>Tap to add the payment screenshot or receipt</div>
+            </div>
+            <div id="p_attached"></div>
+          </div>
+          <div class="fld"><label>Note <span style="color:var(--ink-3);font-weight:500">(optional)</span></label><input id="p_note" placeholder="e.g. paid by UPI"></div>
+        </div>
+        <div class="mfoot">
+          <button class="btn btn-ghost" onclick="closePaid()">Cancel</button>
+          <button class="btn btn-paid" onclick="confirmPaid()">Done, it's paid</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg><span id="toastmsg"></span></div>
+
+  </div>
+</div>
+
+<script>
+const PEOPLE = {Priya:{c:'#DE3C7A'}, Rahul:{c:'#2F6FED'}, Sneha:{c:'#7A6CE0'}, Amit:{c:'#0B7A6E'}};
+const inr = n => '₹'+Number(n).toLocaleString('en-IN');
+const initials = s => s.replace('@','').split(/[\s]+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+const av = name => `<div class="tav" style="background:${(PEOPLE[name]||{c:'#94A3B2'}).c}">${initials(name)}</div>`;
+const today = new Date(); today.setHours(0,0,0,0);
+const d = off => { const x=new Date(today); x.setDate(x.getDate()+off); return x; };
+const iso = dt => dt.toISOString().slice(0,10);
+const fmtDate = dt => dt.toLocaleDateString('en-IN',{day:'numeric',month:'short'});
+function relDue(dt){
+  const days = Math.round((dt-today)/86400000);
+  if(days<0) return {t:`${-days}d overdue`, c:'var(--over)'};
+  if(days===0) return {t:'due today', c:'var(--sched)'};
+  if(days===1) return {t:'due tomorrow', c:'var(--sched)'};
+  return {t:`due in ${days}d`, c:'var(--ink-3)'};
+}
+/* number -> Indian words */
+function wordsINR(num){
+  num=Math.floor(num); if(!num) return '';
+  const a=['','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+  const b=['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+  const two=n=>n<20?a[n]:b[Math.floor(n/10)]+(n%10?'-'+a[n%10]:'');
+  const three=n=>{const h=Math.floor(n/100),r=n%100;return (h?a[h]+' hundred'+(r?' ':''):'')+(r?two(r):'');};
+  let out='';
+  const cr=Math.floor(num/10000000); num%=10000000;
+  const la=Math.floor(num/100000); num%=100000;
+  const th=Math.floor(num/1000); num%=1000;
+  if(cr) out+=three(cr)+' crore ';
+  if(la) out+=three(la)+' lakh ';
+  if(th) out+=three(th)+' thousand ';
+  if(num) out+=three(num);
+  out=out.trim();
+  return out.charAt(0).toUpperCase()+out.slice(1)+' rupees only';
+}
+
+let payments = [
+  { id:1, payee:'Glow Cosmetics Pvt Ltd', amount:45000, purpose:'Bulk SKU restock — skincare', by:'Priya', from:'Zenith',
+    status:'requested', due:iso(d(-2)), color:'#DE3C7A',
+    events:[{who:'Priya', t:'Invoice attached. This is overdue on their end — please clear ASAP.', time:'2 days ago', file:{n:'GLOW-INV-8841.pdf', s:'214 KB', type:'pdf'}}]},
+  { id:2, payee:'Shiprocket', amount:12500, purpose:'Courier wallet top-up', by:'Rahul', from:'Lemolite',
+    status:'scheduled', due:iso(d(0)), scheduledFor:iso(d(0)), color:'#2F6FED',
+    events:[{who:'Rahul', t:'Wallet is low, dispatches pause tomorrow. Top up ₹12,500.', time:'Yesterday'},
+      {sys:true, t:'Amit scheduled this for today', icon:'clock'}]},
+  { id:3, payee:'Meta Ads', amount:8200, purpose:'Diwali campaign — boost', by:'Sneha', from:'Peliswan',
+    status:'confirmed', due:iso(d(-1)), color:'#7A6CE0',
+    events:[{who:'Sneha', t:'Ad account paused, needs recharge of ₹8,200.', time:'2 days ago', img:'screenshot'},
+      {who:'Amit', t:'Done via card.', time:'Yesterday', proof:{n:'meta-receipt.png', s:'88 KB', type:'img'}},
+      {sys:true, t:'Sneha confirmed receipt', icon:'check'}]},
+  { id:4, payee:'AWS', amount:120000, purpose:'Monthly cloud bill', by:'Priya', from:'Zenith',
+    status:'requested', due:iso(d(3)), color:'#DE3C7A',
+    events:[{who:'Priya', t:'AWS invoice for this month. Text below — no PDF yet:', time:'3 hours ago', file:{n:'Instruction (text)', s:'note', type:'txt'}}]},
+  { id:5, payee:'Canva Pro', amount:3400, purpose:'Annual design seats ×2', by:'Rahul', from:'Shivam',
+    status:'paid', due:iso(d(-1)), color:'#2F6FED',
+    events:[{who:'Rahul', t:'Renew both design seats, ₹3,400/yr.', time:'Yesterday'},
+      {who:'Amit', t:'Paid, receipt attached. @Rahul please confirm.', time:'2 hours ago', proof:{n:'canva-receipt.pdf', s:'62 KB', type:'pdf'}}]},
+  { id:6, payee:'@makeupbyzoya', amount:22000, purpose:'Influencer collab — reel', by:'Sneha', from:'Peliswan',
+    status:'hold', due:iso(d(2)), color:'#7A6CE0',
+    events:[{who:'Sneha', t:'Collab payout for the reel that went live.', time:'Yesterday'},
+      {who:'Amit', t:'On hold — no UPI or bank yet. Can you get it?', time:'4 hours ago'}]}
+];
+
+const STATUS = {
+  requested:{lab:'Waiting',cls:'st-new',ic:'⏳'}, scheduled:{lab:'Planned',cls:'st-sched',ic:'📅'},
+  paid:{lab:'Paid',cls:'st-paid',ic:'✓'}, confirmed:{lab:'Done',cls:'st-confirmed',ic:'✅'},
+  hold:{lab:'Needs info',cls:'st-hold',ic:'❓'}, overdue:{lab:'Late',cls:'st-over',ic:'⚠️'}
+};
+function eff(p){ if((p.status==='requested'||p.status==='scheduled') && new Date(p.due)<today) return 'overdue'; return p.status; }
+const ROLE={Priya:'requester',Rahul:'requester',Sneha:'requester',Amit:'payer'};
+let filter='all', selected=null, pendingAttach={}, currentUser='Amit', search='';
+
+/* ---- mode (web / phone) ---- */
+function setMode(m){
+  document.body.classList.remove('web','phone'); document.body.classList.add(m);
+  document.getElementById('tabWeb').classList.toggle('on', m==='web');
+  document.getElementById('tabPhone').classList.toggle('on', m==='phone');
+  if(m==='web') document.body.classList.remove('viewing');
+  renderAll();
+}
+
+function renderRemind(){
+  const el=document.getElementById('remind');
+  const pend=payments.filter(p=>['requested','scheduled','hold'].includes(p.status)).length;
+  if(ROLE[currentUser]!=='payer' || !pend){ el.style.display='none'; return; }
+  el.style.display='flex';
+  const m=Math.floor(cdSec/60), s=cdSec%60;
+  el.innerHTML=`<span>⏰ <b>${pend} payment${pend>1?'s':''}</b> still to pay — reminder every 15 min</span><span class="cd" id="cd">${m}:${String(s).padStart(2,'0')}</span>`;
+}
+
+function renderStrip(){
+  let cards;
+  if(ROLE[currentUser]==='payer'){
+    const pend = payments.filter(p=>['requested','scheduled','hold'].includes(p.status));
+    const over = payments.filter(p=>eff(p)==='overdue');
+    const dueToday = payments.filter(p=>['requested','scheduled'].includes(p.status)&&p.due===iso(today));
+    cards = [
+      {lab:'To pay', val:inr(pend.reduce((s,p)=>s+p.amount,0)), sub:`${pend.length} waiting`, ac:'var(--brand)', tint:'var(--brand-soft)', ic:'💰'},
+      {lab:'Today', val:dueToday.length, sub:dueToday.length?'pay these today':'all clear', ac:'var(--sched)', tint:'var(--sched-soft)', ic:'📅'},
+      {lab:'Late', val:over.length, sub:over.length?inr(over.reduce((s,p)=>s+p.amount,0)):'none late', ac:'var(--over)', tint:'var(--over-soft)', ic:'⚠️'},
+      {lab:'Done', val:payments.filter(p=>['paid','confirmed'].includes(p.status)).length, sub:'proof saved', ac:'var(--paid)', tint:'var(--paid-soft)', ic:'✅'}
+    ];
+  } else {
+    const mine=payments.filter(p=>p.by===currentUser);
+    const pend=mine.filter(p=>['requested','scheduled','hold'].includes(p.status));
+    const over=mine.filter(p=>eff(p)==='overdue');
+    const toConf=mine.filter(p=>p.status==='paid');
+    cards = [
+      {lab:'To pay', val:pend.length, sub:pend.length?inr(pend.reduce((s,p)=>s+p.amount,0)):'none waiting', ac:'var(--brand)', tint:'var(--brand-soft)', ic:'⏳'},
+      {lab:'Check', val:toConf.length, sub:toConf.length?'say you got it':'none to check', ac:'var(--paid)', tint:'var(--paid-soft)', ic:'👀'},
+      {lab:'Late', val:over.length, sub:over.length?'remind payer':'on time', ac:'var(--over)', tint:'var(--over-soft)', ic:'⚠️'},
+      {lab:'Done', val:mine.filter(p=>p.status==='confirmed').length, sub:'finished', ac:'var(--paid)', tint:'var(--paid-soft)', ic:'✅'}
+    ];
+  }
+  document.getElementById('strip').innerHTML = cards.map(c=>`
+    <div class="stat" style="--ac:${c.ac}">
+      <div class="top"><span class="sic" style="background:${c.tint}">${c.ic}</span><span class="lab">${c.lab}</span></div>
+      <div class="val grotesk">${c.val}</div>
+      <div class="sub">${c.sub}</div>
+    </div>`).join('');
+  updateDots();
+}
+
+function renderFilters(){
+  const counts = {all:payments.length, mine:payments.filter(p=>p.by===currentUser).length,
+    requested:payments.filter(p=>eff(p)==='requested').length, scheduled:payments.filter(p=>eff(p)==='scheduled').length,
+    overdue:payments.filter(p=>eff(p)==='overdue').length, paid:payments.filter(p=>['paid','confirmed'].includes(p.status)).length};
+  const tabs=[['all','All'],['mine','Mine'],['requested','Waiting'],['scheduled','Planned'],['overdue','Late'],['paid','Paid']];
+  document.getElementById('filters').innerHTML = tabs.map(([k,l])=>`
+    <button class="chip-f ${k==='mine'?'mine':''} ${filter===k?'on':''}" onclick="setFilter('${k}')">${l}<span class="n">${counts[k]}</span></button>`).join('');
+}
+
+function match(p){
+  const e=eff(p);
+  if(search){ const q=search.toLowerCase();
+    if(!(p.payee.toLowerCase().includes(q)||p.purpose.toLowerCase().includes(q)||String(p.amount).includes(q)||p.by.toLowerCase().includes(q)||(p.from||'').toLowerCase().includes(q))) return false; }
+  if(filter==='all') return true;
+  if(filter==='mine') return p.by===currentUser;
+  if(filter==='paid') return e==='paid'||e==='confirmed';
+  if(filter==='requested') return e==='requested';
+  if(filter==='scheduled') return e==='scheduled';
+  if(filter==='overdue') return e==='overdue';
+  return true;
+}
+function pill(p){ const s=STATUS[eff(p)]; return `<span class="pill ${s.cls}"><span style="font-size:12px;line-height:1">${s.ic}</span>${s.lab}</span>`; }
+
+function renderList(){
+  const rows = payments.filter(match).sort((a,b)=>{
+    const rank=x=>({overdue:0,requested:1,scheduled:2,hold:3,paid:4,confirmed:5})[eff(x)];
+    return rank(a)-rank(b) || new Date(a.due)-new Date(b.due);
+  });
+  const el=document.getElementById('list');
+  if(!rows.length){ el.innerHTML=`<div class="empty" style="height:100%"><div><div class="big">✓</div><h3>Nothing here</h3><p>No payments in this filter.</p></div></div>`; return; }
+  el.innerHTML = rows.map(p=>{
+    const e=eff(p);
+    const dueTxt=(e==='paid'||e==='confirmed')?'':`<span class="due" style="color:${relDue(new Date(p.due)).c}">${relDue(new Date(p.due)).t}</span>`;
+    const mine=p.by===currentUser, needsMe=mine&&p.status==='paid';
+    return `<div class="card ${selected===p.id?'sel':''} ${needsMe?'flag':''}" onclick="select(${p.id})">
+      <div class="av" style="background:${p.color}">${initials(p.payee)}</div>
+      <div class="mid">
+        <div class="row1"><span class="payee">${p.payee}</span><span class="amt grotesk">${inr(p.amount)}</span></div>
+        <div class="row2">${pill(p)}${dueTxt}</div>
+        <div class="meta">${p.purpose}</div>
+        <div class="submeta">from <b>${p.from}</b> · ${mine?'you asked':'by '+p.by}</div>
+        ${needsMe?'<div class="flagline">✓ Paid — tap to say you got it</div>':''}
+      </div></div>`;
+  }).join('');
+}
+
+const FICON = {pdf:'#DE3C3C',img:'#12A150',txt:'#5A6B7B'};
+function fileChip(f){ const l=f.type==='txt'?'TXT':f.type==='img'?'IMG':'PDF';
+  return `<div class="file"><div class="ic" style="background:${FICON[f.type]}">${l}</div><div style="min-width:0"><div class="fn">${f.n}</div><div class="fs">${f.s}</div></div></div>`; }
+
+function renderDetail(){
+  const el=document.getElementById('detail');
+  const p=payments.find(x=>x.id===selected);
+  if(!p){ el.innerHTML=`<div class="empty"><div><div class="big"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A3B2" stroke-width="1.6"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div><h3>Choose a payment</h3><p>Pick one to see everything — what it's for, who paid, and the proof.</p></div></div>`; return; }
+  const e=eff(p);
+  el.innerHTML = `
+    <button class="mobback" onclick="backToList()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 18l-6-6 6-6"/></svg>All payments</button>
+    <div class="dhead">
+      <div class="av" style="background:${p.color}">${initials(p.payee)}</div>
+      <div style="flex:1;min-width:0">
+        <h2>${p.payee}</h2>
+        <div class="sub">${p.purpose} · ${p.by===currentUser?'you asked':'asked by '+p.by}</div>
+        <div style="margin-top:7px;display:flex;gap:7px;align-items:center;flex-wrap:wrap">${pill(p)}
+          ${(e==='paid'||e==='confirmed')?'':`<span class="due" style="color:${relDue(new Date(p.due)).c}">${relDue(new Date(p.due)).t}</span>`}</div>
+      </div>
+      <div class="amt grotesk">${inr(p.amount)}<small>from ${p.from}</small></div>
+    </div>
+    <div class="frow">
+      <div class="cell"><div class="k">Pay from</div><div class="v">${p.from}</div></div>
+      <div class="cell"><div class="k">Pay to</div><div class="v">${p.upi?p.upi:p.payee}</div></div>
+      <div class="cell"><div class="k">Amount</div><div class="v">${inr(p.amount)}</div></div>
+    </div>
+    <div class="thread">${p.events.map(renderMsg).join('')}</div>
+    ${renderActions(p,e)}`;
+  const th=el.querySelector('.thread'); if(th) th.scrollTop=9999;
+}
+
+function renderMsg(ev){
+  if(ev.sys){
+    const ic = ev.icon==='check' ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 2.5"/></svg>';
+    return `<div class="tmsg sys"><span class="sysline">${ic}${ev.t}</span></div>`;
+  }
+  let extra='';
+  if(ev.file) extra=`<div class="att">${fileChip(ev.file)}</div>`;
+  if(ev.img) extra=`<div class="proofimg" style="background:linear-gradient(135deg,#334155,#0f172a)"><span>📷 screenshot.png</span></div>`;
+  if(ev.proof) extra = ev.proof.type==='img'
+    ? `<div class="proofimg" style="background:linear-gradient(135deg,#065f46,#12A150)"><span>✓ ${ev.proof.n}</span></div>`
+    : `<div class="att">${fileChip(ev.proof)}</div>`;
+  return `<div class="tmsg">${av(ev.who)}<div class="bubble"><div class="who" style="color:${(PEOPLE[ev.who]||{c:'#333'}).c}">${ev.who}</div><div class="txt">${ev.t}</div>${extra}<div class="time">${ev.time||''}</div></div></div>`;
+}
+
+function renderActions(p,e){
+  const mine=p.by===currentUser; let hint='', btns='';
+  if(ROLE[currentUser]==='payer'){
+    if(e==='requested'||(e==='overdue'&&p.status==='requested')){ hint='Pick a day to pay, or pay it now.';
+      btns=`<button class="btn btn-sched" onclick="openSched(${p.id})">📅 Pick a day</button><button class="btn btn-paid" onclick="openPaid(${p.id})">✓ I paid this</button>`;
+    } else if(e==='scheduled'||(e==='overdue'&&p.status==='scheduled')){ hint=p.scheduledFor?`Planned for ${fmtDate(new Date(p.scheduledFor))}.`:'A day is planned.';
+      btns=`<button class="btn btn-paid" onclick="openPaid(${p.id})">✓ I paid this</button>`;
+    } else if(e==='paid'){ hint=`Paid. Now ${p.by} needs to say they got it.`; btns=`<button class="btn btn-ghost" disabled style="opacity:.55">Waiting for ${p.by}</button>`;
+    } else if(e==='confirmed'){ hint='All finished — paid and confirmed.'; btns=`<button class="btn btn-ghost" disabled style="opacity:.55">✅ Finished</button>`;
+    } else if(e==='hold'){ hint='Waiting on missing details before you can pay.'; btns=`<button class="btn btn-paid" onclick="openPaid(${p.id})">✓ I paid this</button>`; }
+  } else {
+    if(!mine){ hint=`${p.by} asked for this one. You are only looking.`; btns=`<button class="btn btn-ghost" disabled style="opacity:.55">Just looking</button>`;
+    } else if(e==='paid'){ hint='Amit paid this and added the proof. Look, then say you got it.'; btns=`<button class="btn btn-conf" onclick="confirmReceipt(${p.id})">✓ Yes, I got it</button>`;
+    } else if(e==='confirmed'){ hint='You said you got it. All finished.'; btns=`<button class="btn btn-ghost" disabled style="opacity:.55">✅ Finished</button>`;
+    } else if(e==='overdue'){ hint='This one is late. Send Amit a reminder.'; btns=`<button class="btn btn-sched" onclick="nudge(${p.id})">🔔 Send a reminder</button>`;
+    } else if(e==='scheduled'){ hint=`Amit plans to pay on ${p.scheduledFor?fmtDate(new Date(p.scheduledFor)):'—'}.`; btns=`<button class="btn btn-sched" onclick="nudge(${p.id})">🔔 Send a reminder</button>`;
+    } else if(e==='hold'){ hint='Amit needs more details from you.'; btns=`<button class="btn btn-sched" onclick="nudge(${p.id})">🔔 Send a reminder</button>`;
+    } else { hint='Sent to Amit. You\'ll be told as it changes.'; btns=`<button class="btn btn-sched" onclick="nudge(${p.id})">🔔 Send a reminder</button>`; }
+  }
+  return `<div class="actions"><span class="hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>${hint}</span>${btns}</div>`;
+}
+
+/* interactions */
+function updateDots(){
+  const s=document.getElementById('strip'); const dots=document.querySelectorAll('#stripDots i');
+  if(!dots.length || !s.querySelector('.stat')) return;
+  const max=s.scrollWidth - s.clientWidth;
+  const idx = max<=1 ? 0 : Math.round((s.scrollLeft/max)*(dots.length-1));
+  dots.forEach((dd,i)=>dd.classList.toggle('on', i===idx));
+}
+
+function setFilter(f){ filter=f; renderFilters(); renderList(); }
+function setSearch(v){ search=v.trim(); renderList(); }
+function select(id){ selected=id; if(document.body.classList.contains('phone')) document.body.classList.add('viewing'); renderList(); renderDetail(); }
+function backToList(){ document.body.classList.remove('viewing'); selected=null; renderList(); renderDetail(); }
+function renderAll(){ renderRemind(); renderStrip(); renderFilters(); renderList(); renderDetail(); }
+function toast(msg){ document.getElementById('toastmsg').textContent=msg; const t=document.getElementById('toast'); t.classList.add('on'); clearTimeout(window._tt); window._tt=setTimeout(()=>t.classList.remove('on'),2600); }
+
+/* amount formatting + words */
+function fmtAmt(el){
+  let v=el.value.replace(/[^0-9]/g,'');
+  if(!v){ el.value=''; document.getElementById('n_amt_words').textContent=''; return; }
+  const n=parseInt(v,10); el.value=n.toLocaleString('en-IN');
+  document.getElementById('n_amt_words').textContent='₹'+n.toLocaleString('en-IN')+' — '+wordsINR(n);
+}
+
+/* new */
+function openNew(){ const s=document.getElementById('newScrim'); s.classList.add('on'); document.getElementById('n_due').value=iso(d(2)); document.getElementById('n_amt').value=''; document.getElementById('n_amt_words').textContent=''; }
+function closeNew(){ document.getElementById('newScrim').classList.remove('on'); pendingAttach.new=null; document.getElementById('n_attached').innerHTML=''; }
+function fakeAttach(which){
+  const names=['invoice-scan.pdf','payment-note.png','vendor-bill.pdf','whatsapp-msg.jpg'];
+  const f=names[Math.floor(Math.random()*names.length)];
+  pendingAttach[which]={n:f, type:f.endsWith('.pdf')?'pdf':'img'};
+  document.getElementById(which==='new'?'n_attached':'p_attached').innerHTML=`<div class="attached">📎 ${f} attached</div>`;
+}
+function submitNew(){
+  const amt=parseInt((document.getElementById('n_amt').value||'').replace(/[^0-9]/g,''),10);
+  const payee=document.getElementById('n_payee').value.trim();
+  const from=document.getElementById('n_from').value;
+  const due=document.getElementById('n_due').value;
+  const purpose=document.getElementById('n_purpose').value.trim()||'—';
+  const upi=document.getElementById('n_upi').value.trim();
+  if(!amt||!payee){ toast('Please fill in how much and who to pay'); return; }
+  const by=currentUser; const att=pendingAttach.new;
+  const id=Math.max(...payments.map(p=>p.id))+1;
+  payments.unshift({ id, payee, amount:amt, purpose, by, from, status:'requested', due, upi, color:(PEOPLE[by]||{c:'#0B7A6E'}).c,
+    events:[{who:by, t:purpose==='—'?'Payment request raised.':purpose+'.', time:'just now', file: att?{n:att.n,s:'—',type:att.type}:{n:'Instruction (text)',s:'note',type:'txt'}}]});
+  closeNew(); filter='all'; renderAll(); select(id); toast('Payment added · Amit will see it');
+}
+
+/* schedule */
+let schedTarget=null;
+function openSched(id){ schedTarget=id; document.getElementById('s_date').value=iso(d(1)); document.querySelectorAll('#schedScrim .qd').forEach(b=>b.classList.remove('on')); document.getElementById('schedScrim').classList.add('on'); }
+function closeSched(){ document.getElementById('schedScrim').classList.remove('on'); }
+function quickDate(inputId, off, el){ document.getElementById(inputId).value=iso(d(off)); el.parentElement.querySelectorAll('.qd').forEach(b=>b.classList.remove('on')); el.classList.add('on'); }
+function confirmSched(){
+  const p=payments.find(x=>x.id===schedTarget); const dt=document.getElementById('s_date').value;
+  p.status='scheduled'; p.scheduledFor=dt; p.due=dt;
+  p.events.push({sys:true, icon:'clock', t:`Amit scheduled this for ${fmtDate(new Date(dt))} — reminder set`});
+  closeSched(); renderAll(); toast('Saved · will pay on '+fmtDate(new Date(dt)));
+}
+
+/* paid */
+let paidTarget=null;
+function openPaid(id){ paidTarget=id; pendingAttach.proof=null; document.getElementById('p_attached').innerHTML=''; document.getElementById('p_note').value=''; document.getElementById('paidScrim').classList.add('on'); }
+function closePaid(){ document.getElementById('paidScrim').classList.remove('on'); }
+function confirmPaid(){
+  if(!pendingAttach.proof){ toast('Please add proof before marking it paid'); return; }
+  const p=payments.find(x=>x.id===paidTarget); const note=document.getElementById('p_note').value.trim();
+  p.status='paid';
+  p.events.push({who:'Amit', t:note||'Paid, receipt attached.', time:'just now', proof:{n:pendingAttach.proof.n,s:'—',type:pendingAttach.proof.type}});
+  closePaid(); renderAll(); toast('Marked paid · '+p.by+' will check it');
+}
+function confirmReceipt(id){ const p=payments.find(x=>x.id===id); p.status='confirmed'; p.events.push({sys:true, icon:'check', t:`${p.by} confirmed receipt`}); renderAll(); toast('Thank you · payment finished'); }
+
+/* identity */
+function switchUser(u){
+  currentUser=u; selected=null;
+  document.getElementById('meAv').textContent=initials(u);
+  document.getElementById('meAv').style.background=PEOPLE[u].c;
+  document.getElementById('meRole').textContent = ROLE[u]==='payer'?'You pay the bills':'You add payments';
+  filter = ROLE[u]==='payer' ? 'all' : 'mine';
+  document.getElementById('q').value=''; search=''; document.body.classList.remove('viewing');
+  renderAll();
+  if(ROLE[u]==='payer') toast('Showing everything to pay');
+  else { const mine=payments.filter(p=>p.by===u); const c=mine.filter(p=>p.status==='paid').length; toast(`You asked for ${mine.length}${c?` · ${c} to check`:''}`); }
+}
+function nudge(id){ const p=payments.find(x=>x.id===id); p.events.push({sys:true, icon:'clock', t:`${currentUser} nudged Amit about this`}); renderDetail(); toast('Nudge sent to Amit'); }
+
+document.querySelectorAll('.scrim').forEach(s=>s.addEventListener('click',e=>{ if(e.target===s) s.classList.remove('on'); }));
+document.getElementById('strip').addEventListener('scroll', updateDots, {passive:true});
+
+/* 15-minute reminder countdown for the payer */
+let cdSec=15*60;
+setInterval(()=>{
+  const cd=document.getElementById('cd'); if(!cd) return;
+  cdSec--;
+  if(cdSec<0){ cdSec=15*60; const n=payments.filter(p=>['requested','scheduled','hold'].includes(p.status)).length; if(n) toast(`⏰ Reminder: ${n} payment${n>1?'s':''} still to pay`); }
+  const m=Math.floor(cdSec/60), s=cdSec%60; cd.textContent=`${m}:${String(s).padStart(2,'0')}`;
+},1000);
+
+setMode(window.innerWidth < 760 ? 'phone' : 'web');
+</script>
+</body>
+</html>

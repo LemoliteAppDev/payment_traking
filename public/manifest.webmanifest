@@ -1,0 +1,14 @@
+{
+  "name": "PayTrack — Go DinDin",
+  "short_name": "PayTrack",
+  "description": "One shared, always-current view of every payment.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EAEEF3",
+  "theme_color": "#0B7A6E",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
