@@ -254,7 +254,8 @@ function NotifyBell({ onToast }: { onToast: (msg: string, err?: boolean) => void
     const r = await enablePush();
     if (r === "enabled") { setState("on"); onToast("Notifications are on"); }
     else if (r === "denied") { setState("blocked"); onToast("Notifications blocked in browser settings", true); }
-    else { setState("off"); onToast("Couldn't turn on notifications", true); }
+    else if (r === "blocked-service") { setState("off"); onToast("This browser blocks push. In Brave, enable 'Google services for push messaging'.", true); }
+    else { setState("off"); onToast("Couldn't turn on notifications — try Chrome.", true); }
   }
 
   const on = state === "on";

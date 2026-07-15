@@ -18,28 +18,36 @@ export function pushSupported(): boolean {
   );
 }
 
-export type EnableResult = "enabled" | "denied" | "unsupported" | "error";
+export type EnableResult = "enabled" | "denied" | "unsupported" | "blocked-service" | "error";
 
 export async function enablePush(): Promise<EnableResult> {
   if (!pushSupported()) return "unsupported";
-  const perm = await Notification.requestPermission();
-  if (perm !== "granted") return "denied";
-  const reg = await navigator.serviceWorker.ready;
-  const { key } = await fetch("/api/v1/push/vapid").then((r) => r.json());
-  if (!key) return "error";
-  let sub = await reg.pushManager.getSubscription();
-  if (!sub) {
-    sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(key) as unknown as BufferSource,
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") return "denied";
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await fetch("/api/v1/push/vapid").then((r) => r.json());
+    if (!key) return "error";
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key) as unknown as BufferSource,
+      });
+    }
+    const res = await fetch("/api/v1/push/subscribe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(sub.toJSON()),
     });
+    return res.ok ? "enabled" : "error";
+  } catch (e) {
+    // Brave (and some hardened browsers) disable the push service → AbortError.
+    const msg = String((e as Error)?.message || e);
+    console.error("[push] enable failed:", msg);
+    if (/push service|AbortError/i.test(msg)) return "blocked-service";
+    return "error";
   }
-  const res = await fetch("/api/v1/push/subscribe", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(sub.toJSON()),
-  });
-  return res.ok ? "enabled" : "error";
 }
 
 export async function isPushEnabled(): Promise<boolean> {
