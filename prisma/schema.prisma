@@ -65,8 +65,21 @@ model User {
   events      PaymentEvent[]
   attachments Attachment[]
 
-  accounts Account[]
-  sessions Session[]
+  accounts          Account[]
+  sessions          Session[]
+  pushSubscriptions PushSubscription[]
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @db.VarChar(512)
+  p256dh    String   @db.VarChar(255)
+  auth      String   @db.VarChar(255)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 // ── Auth.js (NextAuth) adapter models ────────────────────────────────

@@ -43,6 +43,11 @@ a{color:inherit}
 .signout{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--ink-3);flex:none;margin-left:2px;transition:.15s}
 .signout:hover{background:var(--surface-3);color:var(--over)}
 .signout svg{width:16px;height:16px}
+.bell{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:var(--ink-3);flex:none;transition:.15s;background:var(--surface-2);border:1px solid var(--line)}
+.bell:hover{color:var(--brand);border-color:var(--brand-soft)}
+.bell[data-on]{color:var(--brand);background:var(--brand-soft);border-color:#BEE6DF}
+.bell[data-blocked]{color:var(--over)}
+.bell svg{width:17px;height:17px}
 
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13.5px;padding:10px 15px;border-radius:10px;transition:.15s;white-space:nowrap}
 .btn:active{transform:translateY(1px)}

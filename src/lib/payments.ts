@@ -3,7 +3,7 @@
 // a PaymentEvent (+ optional attachment) atomically, and fires an event ping.
 import { prisma } from "@/lib/db";
 import { ApiError } from "@/lib/api";
-import { sendTelegram } from "@/lib/notify";
+import { sendPushToUser, sendPushToPayers } from "@/lib/push";
 import { formatINR } from "@/lib/money";
 import { isPastDateTz } from "@/lib/time";
 import {
@@ -206,11 +206,28 @@ function defaultMessage(to: Status, actorName: string): string {
 async function notifyForTransition(to: Status, p: FullPayment): Promise<void> {
   const amt = formatINR(p.amount);
   if (to === "SCHEDULED") {
-    await sendTelegram(p.requestedBy.telegramChatId, `📅 ${amt} to ${p.payee} is scheduled${p.scheduledFor ? ` for ${p.scheduledFor.toDateString()}` : ""}.`);
+    await sendPushToUser(p.requestedById, {
+      title: "Payment scheduled",
+      body: `${amt} to ${p.payee} is scheduled${p.scheduledFor ? ` for ${p.scheduledFor.toDateString()}` : ""}.`,
+      url: "/",
+      tag: `pay-${p.id}`,
+    });
   } else if (to === "PAID") {
-    await sendTelegram(p.requestedBy.telegramChatId, `✓ ${amt} to ${p.payee} is paid. Please confirm you received it.`);
+    await sendPushToUser(p.requestedById, {
+      title: "Paid — please confirm",
+      body: `${amt} to ${p.payee} is paid. Tap to confirm you received it.`,
+      url: "/",
+      tag: `pay-${p.id}`,
+    });
   } else if (to === "CONFIRMED") {
-    if (p.paidBy) await sendTelegram(p.paidBy.telegramChatId, `✅ ${p.requestedBy.name} confirmed ${amt} to ${p.payee}.`);
+    if (p.paidById) {
+      await sendPushToUser(p.paidById, {
+        title: "Receipt confirmed",
+        body: `${p.requestedBy.name} confirmed ${amt} to ${p.payee}.`,
+        url: "/",
+        tag: `pay-${p.id}`,
+      });
+    }
   }
 }
 
@@ -275,12 +292,11 @@ export async function createPayment(
 
   const fresh = await loadPayment(created.id);
   // Ping the payer(s) that a new request arrived.
-  const payers = await prisma.user.findMany({ where: { role: "PAYER" } });
-  await Promise.all(
-    payers.map((pu) =>
-      sendTelegram(pu.telegramChatId, `🆕 ${actor.name} raised ${formatINR(fresh.amount)} to ${fresh.payee}.`),
-    ),
-  ).catch((e) => console.error("[notify] failed", e));
+  await sendPushToPayers({
+    title: "New payment request",
+    body: `${actor.name} raised ${formatINR(fresh.amount)} to ${fresh.payee}.`,
+    url: "/",
+  }).catch((e) => console.error("[notify] failed", e));
   return fresh;
 }
 
@@ -290,10 +306,11 @@ export async function nudgePayment(paymentId: string, actor: SessionUser): Promi
   await prisma.paymentEvent.create({
     data: { paymentId, actorId: actor.id, type: "NUDGE", message: `${actor.name} sent a reminder.` },
   });
-  const payers = await prisma.user.findMany({ where: { role: "PAYER" } });
-  await Promise.all(
-    payers.map((pu) => sendTelegram(pu.telegramChatId, `🔔 ${actor.name} nudged: ${formatINR(payment.amount)} to ${payment.payee} is waiting.`)),
-  ).catch((e) => console.error("[notify] failed", e));
+  await sendPushToPayers({
+    title: "Reminder",
+    body: `${actor.name} nudged: ${formatINR(payment.amount)} to ${payment.payee} is waiting.`,
+    url: "/",
+  }).catch((e) => console.error("[notify] failed", e));
   return loadPayment(paymentId);
 }
 

@@ -3,7 +3,7 @@
 // items to the raising requester, and stops the instant a payment is PAID
 // (PAID/CONFIRMED/CANCELLED are excluded by the status filter).
 import { prisma } from "@/lib/db";
-import { sendTelegram } from "@/lib/notify";
+import { sendPushToUser } from "@/lib/push";
 import { formatINR } from "@/lib/money";
 import { hourInTz } from "@/lib/time";
 import { overdueFor } from "@/lib/payments";
@@ -43,18 +43,19 @@ export async function runReminders(now: Date = new Date()): Promise<ReminderResu
   const lines = fresh
     .map((p) => `• ${formatINR(p.amount)} to ${p.payee}${overdueFor(p) ? " (LATE)" : ""}`)
     .join("\n");
-  const digest = `⏰ ${fresh.length} payment${fresh.length > 1 ? "s" : ""} to pay — ${formatINR(total)} total:\n${lines}`;
+  const digest = `${fresh.length} payment${fresh.length > 1 ? "s" : ""} to pay — ${formatINR(total)} total:\n${lines}`;
   for (const payer of payers) {
-    await sendTelegram(payer.telegramChatId, digest);
+    await sendPushToUser(payer.id, { title: "Payments still to pay", body: digest, url: "/" });
   }
 
   // Overdue items additionally ping the requester who raised them.
   const overdue = fresh.filter((p) => overdueFor(p));
   for (const p of overdue) {
-    await sendTelegram(
-      p.requestedBy.telegramChatId,
-      `⚠️ Your payment ${formatINR(p.amount)} to ${p.payee} is overdue and still unpaid.`,
-    );
+    await sendPushToUser(p.requestedById, {
+      title: "Payment overdue",
+      body: `${formatINR(p.amount)} to ${p.payee} is overdue and still unpaid.`,
+      url: "/",
+    });
   }
 
   // Mark reminded so the next tick (and any overlapping run) doesn't double-send.

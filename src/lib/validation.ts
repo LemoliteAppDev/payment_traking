@@ -37,3 +37,11 @@ export const paidNoteSchema = z.object({
 
 export const LIST_FILTERS = ["all", "mine", "requested", "scheduled", "overdue", "paid"] as const;
 export type ListFilter = (typeof LIST_FILTERS)[number];
+
+export const pushSubscribeSchema = z.object({
+  endpoint: z.string().url().max(512),
+  keys: z.object({
+    p256dh: z.string().min(1).max(255),
+    auth: z.string().min(1).max(255),
+  }),
+});

@@ -6,6 +6,7 @@ import {
   type Card, type Detail, type Effective, type EventLite, type UserLite,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
+import { enablePush, isPushEnabled, pushSupported, pushBlocked } from "@/lib/push-client";
 
 /* ── tiny inline icons (match the prototype) ───────────────────────── */
 const IcSearch = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></svg>);
@@ -56,13 +57,22 @@ export function PayTrackApp() {
     }
   }, [me, qc]);
 
-  const listQ = useQuery({ queryKey: ["payments"], queryFn: () => api.list("all", ""), enabled: !!me });
+  // Poll every 10s so new requests / status changes appear without a refresh.
+  const listQ = useQuery({
+    queryKey: ["payments"],
+    queryFn: () => api.list("all", ""),
+    enabled: !!me,
+    refetchInterval: 10000,
+    refetchOnWindowFocus: true,
+  });
   const all = useMemo(() => listQ.data?.payments ?? [], [listQ.data]);
 
   const detailQ = useQuery({
     queryKey: ["payment", selected],
     queryFn: () => api.get(selected as string),
     enabled: !!selected,
+    refetchInterval: 10000,
+    refetchOnWindowFocus: true,
   });
 
   const refresh = () => { qc.invalidateQueries({ queryKey: ["payments"] }); if (selected) qc.invalidateQueries({ queryKey: ["payment", selected] }); };
@@ -153,7 +163,7 @@ export function PayTrackApp() {
     <>
       <div className="frame">
         <div className="screen">
-          <TopBar me={me} onSignOut={() => signOutAction()} onAdd={() => setNewOpen(true)} />
+          <TopBar me={me} onSignOut={() => signOutAction()} onAdd={() => setNewOpen(true)} onToast={showToast} />
           <RemindBanner show={!!isPayer} all={all} />
           <StatStrip all={all} isPayer={!!isPayer} />
           <div className="dots" id="stripDots"><i className="on" /><i /><i /><i /></div>
@@ -206,12 +216,13 @@ export function PayTrackApp() {
 }
 
 /* ── top bar ───────────────────────────────────────────────────────── */
-function TopBar({ me, onSignOut, onAdd }: { me: UserLite | null; onSignOut: () => void; onAdd: () => void }) {
+function TopBar({ me, onSignOut, onAdd, onToast }: { me: UserLite | null; onSignOut: () => void; onAdd: () => void; onToast: (msg: string, err?: boolean) => void }) {
   return (
     <header className="topbar">
       <div className="logo"><div className="mark">₹</div><div>PayTrack <small style={{ display: "block" }}>Go DinDin</small></div></div>
       <div className="spacer" />
       <button className="btn btn-primary addbtn" onClick={onAdd}><IcPlus />Add a payment</button>
+      <NotifyBell onToast={onToast} />
       <div className="me">
         <div className="avatar" style={{ background: colorFor(me?.name ?? "") }}>{me ? initials(me.name) : "?"}</div>
         <div>
@@ -223,6 +234,47 @@ function TopBar({ me, onSignOut, onAdd }: { me: UserLite | null; onSignOut: () =
         </button>
       </div>
     </header>
+  );
+}
+
+/* Enable-notifications bell. Shows enabled / off / blocked and lets the user
+   turn on browser push with one tap. */
+function NotifyBell({ onToast }: { onToast: (msg: string, err?: boolean) => void }) {
+  const [state, setState] = useState<"loading" | "on" | "off" | "blocked" | "unsupported">("loading");
+  useEffect(() => {
+    if (!pushSupported()) { setState("unsupported"); return; }
+    if (pushBlocked()) { setState("blocked"); return; }
+    isPushEnabled().then((on) => setState(on ? "on" : "off"));
+  }, []);
+
+  if (state === "unsupported") return null;
+
+  async function enable() {
+    setState("loading");
+    const r = await enablePush();
+    if (r === "enabled") { setState("on"); onToast("Notifications are on"); }
+    else if (r === "denied") { setState("blocked"); onToast("Notifications blocked in browser settings", true); }
+    else { setState("off"); onToast("Couldn't turn on notifications", true); }
+  }
+
+  const on = state === "on";
+  const blocked = state === "blocked";
+  const title = on ? "Notifications on" : blocked ? "Blocked in browser settings" : "Turn on notifications";
+  return (
+    <button
+      className="bell"
+      title={title}
+      aria-label={title}
+      onClick={() => { if (!on && !blocked) enable(); }}
+      data-on={on ? "1" : undefined}
+      data-blocked={blocked ? "1" : undefined}
+    >
+      <svg viewBox="0 0 24 24" fill={on ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
+        <path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+        <path d="M13.7 21a2 2 0 01-3.4 0" />
+        {blocked && <path d="M3 3l18 18" stroke="currentColor" strokeWidth="2" />}
+      </svg>
+    </button>
   );
 }
 

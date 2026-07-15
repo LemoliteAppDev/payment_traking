@@ -1,7 +1,7 @@
-// Minimal service worker — enough to make PayTrack installable as a PWA.
-// A network-first shell cache; API calls always hit the network (never cached),
+// Service worker — PWA install + Web Push notifications.
+// Network-first shell cache; API calls always hit the network (never cached),
 // so payment data is never served stale.
-const CACHE = "paytrack-v1";
+const CACHE = "paytrack-v2";
 const SHELL = ["/", "/icon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
@@ -25,5 +25,41 @@ self.addEventListener("fetch", (e) => {
         return res;
       })
       .catch(() => caches.match(e.request).then((r) => r ?? caches.match("/"))),
+  );
+});
+
+// ── Web Push ─────────────────────────────────────────────────────────
+self.addEventListener("push", (e) => {
+  let data = {};
+  try {
+    data = e.data ? e.data.json() : {};
+  } catch {
+    data = { title: "PayTrack", body: e.data ? e.data.text() : "" };
+  }
+  const title = data.title || "PayTrack";
+  e.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || "",
+      icon: "/icon.svg",
+      badge: "/icon.svg",
+      tag: data.tag,
+      data: { url: data.url || "/" },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const target = (e.notification.data && e.notification.data.url) || "/";
+  e.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      for (const c of clients) {
+        if ("focus" in c) {
+          c.navigate(target);
+          return c.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    }),
   );
 });
