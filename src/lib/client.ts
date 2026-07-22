@@ -46,6 +46,20 @@ export interface Detail extends Omit<Card, "mine"> {
   events: EventLite[];
 }
 
+export interface NotificationItem {
+  id: string;
+  type: string;
+  message: string;
+  createdAt: string;
+  unread: boolean;
+  actor: { id: string; name: string; role: Role } | null;
+  payment: { id: string; payee: string; amount: string; status: Status };
+}
+export interface NotificationsResponse {
+  items: NotificationItem[];
+  unread: number;
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const text = await res.text();
@@ -83,6 +97,8 @@ export const api = {
       headers: { "idempotency-key": idempotencyKey },
     }),
   nudge: (id: string) => req<{ payment: Detail }>(`/api/v1/payments/${id}/nudge`, { method: "POST" }),
+  notifications: () => req<NotificationsResponse>("/api/v1/notifications"),
+  markNotificationsRead: () => req<{ ok: true }>("/api/v1/notifications/read", { method: "POST" }),
 };
 
 // ── UI helpers ───────────────────────────────────────────────────────
@@ -118,6 +134,18 @@ export function relDue(dateISO: string): { t: string; c: string } {
   if (days === 0) return { t: "due today", c: "var(--sched)" };
   if (days === 1) return { t: "due tomorrow", c: "var(--sched)" };
   return { t: `due in ${days}d`, c: "var(--ink-3)" };
+}
+
+/** "just now" / "5m" / "3h" / "2d" — compact relative time for the bell. */
+export function timeAgo(dateISO: string): string {
+  const secs = Math.max(0, Math.floor((Date.now() - new Date(dateISO).getTime()) / 1000));
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return days < 7 ? `${days}d ago` : new Date(dateISO).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
 export const fmtShort = (dateISO: string): string =>

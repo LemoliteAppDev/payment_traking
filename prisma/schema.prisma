@@ -57,6 +57,7 @@ model User {
   telegramChatId String?
   passwordHash   String?
   emailVerified  DateTime?
+  notificationsReadAt DateTime?
   createdAt      DateTime  @default(now())
 
   requested   Payment[]      @relation("requestedBy")

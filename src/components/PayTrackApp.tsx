@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, isoDay,
+  api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, isoDay, timeAgo,
   type Card, type Detail, type Effective, type EventLite, type UserLite,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
@@ -163,7 +163,7 @@ export function PayTrackApp() {
     <>
       <div className="frame">
         <div className="screen">
-          <TopBar me={me} onSignOut={() => signOutAction()} onAdd={() => setNewOpen(true)} onToast={showToast} />
+          <TopBar me={me} onSignOut={() => signOutAction()} onAdd={() => setNewOpen(true)} onToast={showToast} onOpenPayment={(id) => setSelected(id)} />
           <RemindBanner show={!!isPayer} all={all} />
           <StatStrip all={all} isPayer={!!isPayer} />
           <div className="dots" id="stripDots"><i className="on" /><i /><i /><i /></div>
@@ -216,13 +216,13 @@ export function PayTrackApp() {
 }
 
 /* ── top bar ───────────────────────────────────────────────────────── */
-function TopBar({ me, onSignOut, onAdd, onToast }: { me: UserLite | null; onSignOut: () => void; onAdd: () => void; onToast: (msg: string, err?: boolean) => void }) {
+function TopBar({ me, onSignOut, onAdd, onToast, onOpenPayment }: { me: UserLite | null; onSignOut: () => void; onAdd: () => void; onToast: (msg: string, err?: boolean) => void; onOpenPayment: (id: string) => void }) {
   return (
     <header className="topbar">
       <div className="logo"><div className="mark">₹</div><div>PayTrack <small style={{ display: "block" }}>Go DinDin</small></div></div>
       <div className="spacer" />
       <button className="btn btn-primary addbtn" onClick={onAdd}><IcPlus />Add a payment</button>
-      <NotifyBell onToast={onToast} />
+      <NotificationBell onToast={onToast} onOpenPayment={onOpenPayment} />
       <div className="me">
         <div className="avatar" style={{ background: colorFor(me?.name ?? "") }}>{me ? initials(me.name) : "?"}</div>
         <div>
@@ -237,45 +237,99 @@ function TopBar({ me, onSignOut, onAdd, onToast }: { me: UserLite | null; onSign
   );
 }
 
-/* Enable-notifications bell. Shows enabled / off / blocked and lets the user
-   turn on browser push with one tap. */
-function NotifyBell({ onToast }: { onToast: (msg: string, err?: boolean) => void }) {
-  const [state, setState] = useState<"loading" | "on" | "off" | "blocked" | "unsupported">("loading");
+/* Notification centre: bell + unread badge, opens a panel of recent activity.
+   The browser-push toggle lives inside the panel so there's one control. */
+function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, err?: boolean) => void; onOpenPayment: (id: string) => void }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [push, setPush] = useState<"loading" | "on" | "off" | "blocked" | "unsupported">("loading");
+
+  const notifQ = useQuery({ queryKey: ["notifications"], queryFn: api.notifications, refetchInterval: 10000 });
+  const items = notifQ.data?.items ?? [];
+  const unread = notifQ.data?.unread ?? 0;
+
+  const markRead = useMutation({
+    mutationFn: api.markNotificationsRead,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["notifications"] }),
+  });
+
   useEffect(() => {
-    if (!pushSupported()) { setState("unsupported"); return; }
-    if (pushBlocked()) { setState("blocked"); return; }
-    isPushEnabled().then((on) => setState(on ? "on" : "off"));
+    if (!pushSupported()) { setPush("unsupported"); return; }
+    if (pushBlocked()) { setPush("blocked"); return; }
+    isPushEnabled().then((v) => setPush(v ? "on" : "off"));
   }, []);
 
-  if (state === "unsupported") return null;
+  // Close when clicking outside the bell/panel.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest(".notifwrap")) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
 
-  async function enable() {
-    setState("loading");
-    const r = await enablePush();
-    if (r === "enabled") { setState("on"); onToast("Notifications are on"); }
-    else if (r === "denied") { setState("blocked"); onToast("Notifications blocked in browser settings", true); }
-    else if (r === "blocked-service") { setState("off"); onToast("This browser blocks push. In Brave, enable 'Google services for push messaging'.", true); }
-    else { setState("off"); onToast("Couldn't turn on notifications — try Chrome.", true); }
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && unread > 0) markRead.mutate();
   }
 
-  const on = state === "on";
-  const blocked = state === "blocked";
-  const title = on ? "Notifications on" : blocked ? "Blocked in browser settings" : "Turn on notifications";
+  async function enablePushNow() {
+    setPush("loading");
+    const r = await enablePush();
+    if (r === "enabled") { setPush("on"); onToast("Browser alerts are on"); }
+    else if (r === "denied") { setPush("blocked"); onToast("Alerts blocked in browser settings", true); }
+    else if (r === "blocked-service") { setPush("off"); onToast("This browser blocks push. In Brave, enable 'Google services for push messaging'.", true); }
+    else { setPush("off"); onToast("Couldn't turn on browser alerts — try Chrome.", true); }
+  }
+
   return (
-    <button
-      className="bell"
-      title={title}
-      aria-label={title}
-      onClick={() => { if (!on && !blocked) enable(); }}
-      data-on={on ? "1" : undefined}
-      data-blocked={blocked ? "1" : undefined}
-    >
-      <svg viewBox="0 0 24 24" fill={on ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
-        <path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-        <path d="M13.7 21a2 2 0 01-3.4 0" />
-        {blocked && <path d="M3 3l18 18" stroke="currentColor" strokeWidth="2" />}
-      </svg>
-    </button>
+    <div className="notifwrap">
+      <button className="bell" onClick={toggle} title="Notifications" aria-label="Notifications" data-on={unread > 0 ? "1" : undefined}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+          <path d="M13.7 21a2 2 0 01-3.4 0" />
+        </svg>
+        {unread > 0 && <span className="badge">{unread > 9 ? "9+" : unread}</span>}
+      </button>
+
+      {open && (
+        <div className="notifpanel">
+          <div className="nphead">
+            <strong>Notifications</strong>
+            {unread > 0 && <button onClick={() => markRead.mutate()}>Mark all read</button>}
+          </div>
+
+          {push === "off" && (
+            <button className="npush" onClick={enablePushNow}>🔔 Also alert me when the app is closed</button>
+          )}
+          {push === "blocked" && <div className="npush blocked">Browser alerts are blocked in your browser settings</div>}
+
+          <div className="nplist">
+            {items.length === 0 ? (
+              <div className="npempty">Nothing yet — you&apos;ll see activity here.</div>
+            ) : (
+              items.map((n) => (
+                <button
+                  key={n.id}
+                  className={`npitem ${n.unread ? "un" : ""}`}
+                  onClick={() => { onOpenPayment(n.payment.id); setOpen(false); }}
+                >
+                  <div className="npav" style={{ background: colorFor(n.actor?.name ?? "") }}>
+                    {initials(n.actor?.name ?? "?")}
+                  </div>
+                  <div className="npbody">
+                    <div className="npmsg">{n.message}</div>
+                    <div className="npmeta">{n.payment.payee} · {fmtPaise(n.payment.amount)} · {timeAgo(n.createdAt)}</div>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
