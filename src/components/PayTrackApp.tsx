@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, isoDay, timeAgo,
@@ -19,6 +19,9 @@ const IcUpload = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 
 const uuid = () => (globalThis.crypto?.randomUUID?.() ?? String(Math.random()).slice(2));
 
+// Opens the full-screen image lightbox (provided at the app root).
+const ImageViewerCtx = createContext<(src: string, name: string) => void>(() => {});
+
 export function PayTrackApp() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState("all");
@@ -28,6 +31,7 @@ export function PayTrackApp() {
   const [newOpen, setNewOpen] = useState(false);
   const [schedFor, setSchedFor] = useState<string | null>(null);
   const [paidFor, setPaidFor] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
 
   const showToast = (msg: string, err = false) => setToast({ msg, err });
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2600); return () => clearTimeout(t); }, [toast]);
@@ -160,7 +164,7 @@ export function PayTrackApp() {
   }, [all.length, isPayer]);
 
   return (
-    <>
+    <ImageViewerCtx.Provider value={(src, name) => setLightbox({ src, name })}>
       <div className="frame">
         <div className="screen">
           <TopBar me={me} onSignOut={() => signOutAction()} onAdd={() => setNewOpen(true)} onToast={showToast} onOpenPayment={(id) => setSelected(id)} />
@@ -211,7 +215,27 @@ export function PayTrackApp() {
           </div>
         </div>
       </div>
-    </>
+      <Lightbox img={lightbox} onClose={() => setLightbox(null)} />
+    </ImageViewerCtx.Provider>
+  );
+}
+
+/* Full-screen image viewer (WhatsApp-style). Close on ✕ / backdrop / Esc. */
+function Lightbox({ img, onClose }: { img: { src: string; name: string } | null; onClose: () => void }) {
+  useEffect(() => {
+    if (!img) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [img, onClose]);
+  if (!img) return null;
+  return (
+    <div className="lightbox" onClick={onClose}>
+      <button className="lbclose" onClick={onClose} aria-label="Close">✕</button>
+      { /* eslint-disable-next-line @next/next/no-img-element */ }
+      <img src={img.src} alt={img.name} onClick={(e) => e.stopPropagation()} />
+      <div className="lbname" onClick={(e) => e.stopPropagation()}>{img.name}</div>
+    </div>
   );
 }
 
@@ -396,7 +420,7 @@ const fmtISODate = (iso: string) => iso.slice(0, 10);
 
 /* ── filters ───────────────────────────────────────────────────────── */
 function Filters({ filter, counts, onPick }: { filter: string; counts: Record<string, number>; onPick: (f: string) => void }) {
-  const tabs: [string, string][] = [["all", "All"], ["mine", "Mine"], ["requested", "Waiting"], ["scheduled", "Planned"], ["overdue", "Late"], ["paid", "Paid"]];
+  const tabs: [string, string][] = [["requested", "Waiting"], ["paid", "Paid"], ["all", "All"], ["mine", "Mine"]];
   return (
     <div className="filters">
       {tabs.map(([k, l]) => (
@@ -499,11 +523,13 @@ function ThreadMsg({ ev }: { ev: EventLite }) {
 }
 function AttachmentView({ a }: { a: { id: string; kind: string; originalName: string; mimeType: string } }) {
   const href = `/api/v1/attachments/${a.id}`;
+  const openImage = useContext(ImageViewerCtx);
   if (a.mimeType.startsWith("image/")) {
     return (
-      <a className="proofimg" href={href} target="_blank" rel="noreferrer" style={{ background: a.kind === "PROOF" ? "linear-gradient(135deg,#065f46,#12A150)" : "linear-gradient(135deg,#334155,#0f172a)" }}>
-        <span>{a.kind === "PROOF" ? "✓ " : "📷 "}{a.originalName}</span>
-      </a>
+      <button type="button" className="proofimg" onClick={() => openImage(href, a.originalName)} title={a.originalName}>
+        { /* eslint-disable-next-line @next/next/no-img-element */ }
+        <img src={href} alt={a.originalName} loading="lazy" />
+      </button>
     );
   }
   const label = a.mimeType === "application/pdf" ? "PDF" : "FILE";
@@ -567,6 +593,29 @@ function Actions(props: {
 }
 
 /* ── sheets ────────────────────────────────────────────────────────── */
+/* While a sheet is open, Ctrl/⌘+V pastes a screenshot straight into it. */
+function usePasteImage(onImage: (f: File) => void) {
+  useEffect(() => {
+    const handler = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const it of items) {
+        if (it.kind === "file" && it.type.startsWith("image/")) {
+          const f = it.getAsFile();
+          if (f) {
+            const named = f.name && f.name !== "image.png" ? f : new File([f], `pasted-${Date.now()}.png`, { type: f.type || "image/png" });
+            onImage(named);
+            e.preventDefault();
+          }
+          break;
+        }
+      }
+    };
+    document.addEventListener("paste", handler);
+    return () => document.removeEventListener("paste", handler);
+  }, [onImage]);
+}
+
 function Sheet({ title, children, foot, onClose }: { title: string; children: React.ReactNode; foot: React.ReactNode; onClose: () => void }) {
   return (
     <div className="scrim on" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -588,6 +637,7 @@ function NewSheet({ onClose, onSubmit, busy, onError }: { onClose: () => void; o
   const [due, setDue] = useState(isoDay(2));
   const [file, setFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  usePasteImage(setFile);
   const rupees = parseInt(amt.replace(/[^0-9]/g, "") || "0", 10);
   const words = rupees ? `₹${rupees.toLocaleString("en-IN")} — ${wordsFromRupees(rupees)}` : "";
 
@@ -620,7 +670,7 @@ function NewSheet({ onClose, onSubmit, busy, onError }: { onClose: () => void; o
       <div className="fld"><label>What is this for?</label><input placeholder="e.g. Diwali advert pictures" value={purpose} onChange={(e) => setPurpose(e.target.value)} /></div>
       <div className="fld">
         <label>Add a photo or bill</label>
-        <div className="drop" onClick={() => fileRef.current?.click()}><IcUpload /><div>Tap to add a bill, screenshot, or PDF</div></div>
+        <div className="drop" onClick={() => fileRef.current?.click()}><IcUpload /><div>Tap to add a bill, screenshot, or PDF — or paste (Ctrl/⌘+V)</div></div>
         <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         {file && <div className="attached">📎 {file.name} attached</div>}
       </div>
@@ -653,6 +703,7 @@ function PaidSheet({ onClose, onSubmit, busy, onError }: { onClose: () => void; 
   const [file, setFile] = useState<File | null>(null);
   const [note, setNote] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  usePasteImage(setFile);
   function submit() {
     if (!file) { onError("Please add proof before marking it paid"); return; }
     const f = new FormData();
@@ -666,7 +717,7 @@ function PaidSheet({ onClose, onSubmit, busy, onError }: { onClose: () => void; 
       <p>Add a picture that shows you paid — a screenshot or receipt. This is how everyone knows it&apos;s really done.</p>
       <div className="fld">
         <label>Add proof of payment</label>
-        <div className="drop" onClick={() => fileRef.current?.click()}><IcUpload /><div>Tap to add the payment screenshot or receipt</div></div>
+        <div className="drop" onClick={() => fileRef.current?.click()}><IcUpload /><div>Tap to add the screenshot or receipt — or paste (Ctrl/⌘+V)</div></div>
         <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         {file && <div className="attached">📎 {file.name} attached</div>}
       </div>
