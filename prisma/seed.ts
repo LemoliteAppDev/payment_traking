@@ -3,13 +3,18 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-// The 4 internal users — login ID (email) + role. Mahesh pays; others raise.
-// IDs are static and admin-controlled. Keep AUTH_WHITELIST in .env in sync.
-const USERS = [
-  { name: "Mahesh", email: "mahesh@payment.com", role: Role.PAYER },
-  { name: "Jignesh", email: "jignesh@payment.com", role: Role.REQUESTER },
-  { name: "Jagat", email: "jagat@payment.com", role: Role.REQUESTER },
-  { name: "Bhadresh", email: "bhadresh@payment.com", role: Role.REQUESTER },
+// Fixed roster. ADMINs view everything; capability flags decide duties:
+// Mahesh pays, Jagat approves user requests, Jignesh manages accounts.
+// USERs see only their own payments and route through Jagat for approval.
+type SeedUser = { name: string; email: string; role: Role; isPayer?: boolean; isApprover?: boolean; isManager?: boolean };
+const ROSTER: SeedUser[] = [
+  { name: "Mahesh", email: "mahesh@payment.com", role: Role.ADMIN, isPayer: true },
+  { name: "Jagat", email: "jagat@payment.com", role: Role.ADMIN, isApprover: true },
+  { name: "Jignesh", email: "jignesh@payment.com", role: Role.ADMIN, isManager: true },
+  { name: "Bhadresh", email: "bhadresh@payment.com", role: Role.ADMIN },
+  { name: "Payal", email: "payal@payment.com", role: Role.USER },
+  { name: "Umang", email: "umang@payment.com", role: Role.USER },
+  { name: "Dharmesh", email: "dharmesh@payment.com", role: Role.USER },
 ];
 
 // Temporary password set on first creation only (never overwrites a changed
@@ -25,13 +30,20 @@ const day = (offset: number) => {
 
 async function main() {
   const users: Record<string, string> = {};
-  for (const u of USERS) {
+  for (const u of ROSTER) {
     const existing = await prisma.user.findUnique({ where: { email: u.email } });
     const passwordHash = existing?.passwordHash ?? (await bcrypt.hash(TEMP_PASSWORD, 10));
+    const flags = {
+      role: u.role,
+      isPayer: !!u.isPayer,
+      isApprover: !!u.isApprover,
+      isManager: !!u.isManager,
+      active: true,
+    };
     const rec = await prisma.user.upsert({
       where: { email: u.email },
-      update: { name: u.name, role: u.role, passwordHash },
-      create: { ...u, passwordHash },
+      update: { name: u.name, ...flags, passwordHash },
+      create: { name: u.name, email: u.email, ...flags, passwordHash },
     });
     users[u.name] = rec.id;
   }

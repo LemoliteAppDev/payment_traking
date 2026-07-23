@@ -14,6 +14,10 @@ export interface SessionUser {
   name: string;
   email: string;
   role: Role;
+  isAdmin: boolean;
+  isPayer: boolean;
+  isApprover: boolean;
+  isManager: boolean;
 }
 
 /** Real authenticated email from Auth.js. Filled in Step 5; null for now. */
@@ -40,9 +44,18 @@ async function getDevEmail(): Promise<string | null> {
 export async function currentUser(): Promise<SessionUser | null> {
   const email = (await getAuthedEmail()) ?? (await getDevEmail());
   if (!email) return null;
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) return null;
-  return { id: user.id, name: user.name, email: user.email, role: user.role };
+  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+  if (!user || !user.active) return null;
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    isAdmin: user.role === "ADMIN",
+    isPayer: user.isPayer,
+    isApprover: user.isApprover,
+    isManager: user.isManager,
+  };
 }
 
 export async function requireUser(): Promise<SessionUser> {

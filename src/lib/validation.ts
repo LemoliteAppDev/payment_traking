@@ -27,6 +27,20 @@ export const holdSchema = z.object({
   reason: z.string().trim().max(500).optional().default(""),
 });
 
+export const reasonSchema = z.object({
+  reason: z.string().trim().max(500).optional().default(""),
+});
+
+export const createUserSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  loginId: z.string().trim().toLowerCase().min(3).max(120),
+  password: z.string().min(6).max(200),
+  role: z.enum(["ADMIN", "USER"]).default("USER"),
+});
+
+export const setPasswordSchema = z.object({ password: z.string().min(6).max(200) });
+export const setActiveSchema = z.object({ active: z.boolean() });
+
 export const cancelSchema = z.object({
   reason: z.string().trim().max(500).optional().default(""),
 });

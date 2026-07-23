@@ -3,7 +3,7 @@
 // a PaymentEvent (+ optional attachment) atomically, and fires an event ping.
 import { prisma } from "@/lib/db";
 import { ApiError } from "@/lib/api";
-import { sendPushToUser, sendPushToPayers } from "@/lib/push";
+import { sendPushToUser, sendPushToPayers, sendPushToApprovers } from "@/lib/push";
 import { formatINR } from "@/lib/money";
 import { isPastDateTz } from "@/lib/time";
 import {
@@ -18,6 +18,7 @@ import type { Prisma, EventType, AttachmentKind } from "@/generated/prisma";
 
 const paymentInclude = {
   requestedBy: true,
+  approvedBy: true,
   paidBy: true,
   confirmedBy: true,
   attachments: { orderBy: { createdAt: "asc" } },
@@ -54,10 +55,12 @@ export function serializePayment(p: FullPayment) {
     overdue,
     dueDate: p.dueDate,
     scheduledFor: p.scheduledFor,
+    approvedAt: p.approvedAt,
     paidAt: p.paidAt,
     confirmedAt: p.confirmedAt,
     createdAt: p.createdAt,
     requestedBy: userLite(p.requestedBy),
+    approvedBy: p.approvedBy ? userLite(p.approvedBy) : null,
     paidBy: p.paidBy ? userLite(p.paidBy) : null,
     confirmedBy: p.confirmedBy ? userLite(p.confirmedBy) : null,
     attachments: p.attachments.map((a) => ({
@@ -129,7 +132,12 @@ export async function applyTransition(opts: ApplyOptions): Promise<FullPayment> 
   };
 
   // The guarded transition — throws TransitionError on any violation.
-  const result = transition(like, to, { id: actor.id, role: actor.role }, {
+  const result = transition(like, to, {
+    id: actor.id,
+    isPayer: actor.isPayer,
+    isApprover: actor.isApprover,
+    isAdmin: actor.isAdmin,
+  }, {
     scheduledFor: opts.scheduledFor,
     hasProof,
   });
@@ -194,6 +202,9 @@ export async function loadPayment(id: string): Promise<FullPayment> {
 
 function defaultMessage(to: Status, actorName: string): string {
   switch (to) {
+    case "REQUESTED": return `${actorName} approved this — sent to the payer.`;
+    case "RETURNED": return `${actorName} returned this for changes.`;
+    case "AWAITING_APPROVAL": return `${actorName} resubmitted this for approval.`;
     case "SCHEDULED": return `${actorName} scheduled this payment.`;
     case "PAID": return "Paid, proof attached.";
     case "HOLD": return `${actorName} put this on hold.`;
@@ -205,29 +216,25 @@ function defaultMessage(to: Status, actorName: string): string {
 
 async function notifyForTransition(to: Status, p: FullPayment): Promise<void> {
   const amt = formatINR(p.amount);
-  if (to === "SCHEDULED") {
+  const tag = `pay-${p.id}`;
+  if (to === "REQUESTED") {
+    // Approved → payer gets it to pay; raiser is told it's approved.
+    await sendPushToPayers({ title: "New payment to pay", body: `${amt} to ${p.payee} was approved.`, url: "/", tag });
+    await sendPushToUser(p.requestedById, { title: "Request approved", body: `Your ${amt} to ${p.payee} was approved.`, url: "/", tag });
+  } else if (to === "RETURNED") {
+    await sendPushToUser(p.requestedById, { title: "Returned for changes", body: `${amt} to ${p.payee} needs changes — edit and resubmit.`, url: "/", tag });
+  } else if (to === "AWAITING_APPROVAL") {
+    await sendPushToApprovers({ title: "Resubmitted for approval", body: `${p.requestedBy.name} resubmitted ${amt} to ${p.payee}.`, url: "/", tag });
+  } else if (to === "SCHEDULED") {
     await sendPushToUser(p.requestedById, {
       title: "Payment scheduled",
       body: `${amt} to ${p.payee} is scheduled${p.scheduledFor ? ` for ${p.scheduledFor.toDateString()}` : ""}.`,
-      url: "/",
-      tag: `pay-${p.id}`,
+      url: "/", tag,
     });
   } else if (to === "PAID") {
-    await sendPushToUser(p.requestedById, {
-      title: "Paid — please confirm",
-      body: `${amt} to ${p.payee} is paid. Tap to confirm you received it.`,
-      url: "/",
-      tag: `pay-${p.id}`,
-    });
+    await sendPushToUser(p.requestedById, { title: "Paid — please confirm", body: `${amt} to ${p.payee} is paid. Tap to confirm you received it.`, url: "/", tag });
   } else if (to === "CONFIRMED") {
-    if (p.paidById) {
-      await sendPushToUser(p.paidById, {
-        title: "Receipt confirmed",
-        body: `${p.requestedBy.name} confirmed ${amt} to ${p.payee}.`,
-        url: "/",
-        tag: `pay-${p.id}`,
-      });
-    }
+    if (p.paidById) await sendPushToUser(p.paidById, { title: "Receipt confirmed", body: `${p.requestedBy.name} confirmed ${amt} to ${p.payee}.`, url: "/", tag });
   }
 }
 
@@ -250,6 +257,8 @@ export async function createPayment(
   actor: SessionUser,
   file?: { originalName: string; storedName: string; mimeType: string; size: number },
 ): Promise<FullPayment> {
+  // Users' requests go to the approver first; admins' requests go to the payer.
+  const needsApproval = !actor.isAdmin;
   const created = await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.create({
       data: {
@@ -259,7 +268,7 @@ export async function createPayment(
         purpose: input.purpose,
         upi: input.upi || null,
         dueDate: input.dueDate,
-        status: "REQUESTED",
+        status: needsApproval ? "AWAITING_APPROVAL" : "REQUESTED",
         requestedById: actor.id,
       },
     });
@@ -267,22 +276,16 @@ export async function createPayment(
     if (file) {
       const att = await tx.attachment.create({
         data: {
-          paymentId: payment.id,
-          kind: "INSTRUCTION",
-          originalName: file.originalName,
-          storedName: file.storedName,
-          mimeType: file.mimeType,
-          size: file.size,
-          uploadedById: actor.id,
+          paymentId: payment.id, kind: "INSTRUCTION",
+          originalName: file.originalName, storedName: file.storedName,
+          mimeType: file.mimeType, size: file.size, uploadedById: actor.id,
         },
       });
       attachmentId = att.id;
     }
     await tx.paymentEvent.create({
       data: {
-        paymentId: payment.id,
-        actorId: actor.id,
-        type: "REQUEST",
+        paymentId: payment.id, actorId: actor.id, type: "REQUEST",
         message: input.purpose ? `${input.purpose}.` : "Payment request raised.",
         attachmentId,
       },
@@ -291,13 +294,52 @@ export async function createPayment(
   });
 
   const fresh = await loadPayment(created.id);
-  // Ping the payer(s) that a new request arrived.
-  await sendPushToPayers({
-    title: "New payment request",
-    body: `${actor.name} raised ${formatINR(fresh.amount)} to ${fresh.payee}.`,
-    url: "/",
-  }).catch((e) => console.error("[notify] failed", e));
+  const amt = formatINR(fresh.amount);
+  if (needsApproval) {
+    await sendPushToApprovers({ title: "Approval needed", body: `${actor.name} raised ${amt} to ${fresh.payee}.`, url: "/" }).catch((e) => console.error("[notify] failed", e));
+  } else {
+    await sendPushToPayers({ title: "New payment to pay", body: `${actor.name} raised ${amt} to ${fresh.payee}.`, url: "/" }).catch((e) => console.error("[notify] failed", e));
+  }
   return fresh;
+}
+
+// ── Edit a payment (raiser only, while awaiting approval or returned) ──
+export async function editPayment(
+  paymentId: string,
+  actor: SessionUser,
+  input: CreateInput,
+  file?: { originalName: string; storedName: string; mimeType: string; size: number },
+): Promise<FullPayment> {
+  const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
+  if (!payment) throw new ApiError(404, "NOT_FOUND", "Payment not found.");
+  if (payment.requestedById !== actor.id) throw new ApiError(403, "FORBIDDEN", "Only the person who raised this can edit it.");
+  if (payment.status !== "AWAITING_APPROVAL" && payment.status !== "RETURNED") {
+    throw new ApiError(409, "NOT_EDITABLE", "This payment can no longer be edited.");
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.payment.update({
+      where: { id: paymentId },
+      data: {
+        amount: input.amount, payee: input.payee, payFrom: input.payFrom,
+        purpose: input.purpose, upi: input.upi || null, dueDate: input.dueDate,
+      },
+    });
+    let attachmentId: string | undefined;
+    if (file) {
+      const att = await tx.attachment.create({
+        data: {
+          paymentId, kind: "INSTRUCTION",
+          originalName: file.originalName, storedName: file.storedName,
+          mimeType: file.mimeType, size: file.size, uploadedById: actor.id,
+        },
+      });
+      attachmentId = att.id;
+    }
+    await tx.paymentEvent.create({
+      data: { paymentId, actorId: actor.id, type: "EDIT", message: `${actor.name} edited this request.`, attachmentId },
+    });
+  });
+  return loadPayment(paymentId);
 }
 
 // ── Nudge (no status change) ─────────────────────────────────────────
@@ -315,10 +357,12 @@ export async function nudgePayment(paymentId: string, actor: SessionUser): Promi
 }
 
 // ── List with server-side filter + search ────────────────────────────
-const RANK: Record<string, number> = { OVERDUE: 0, REQUESTED: 1, SCHEDULED: 2, HOLD: 3, PAID: 4, CONFIRMED: 5, CANCELLED: 6 };
+const RANK: Record<string, number> = { RETURNED: 0, AWAITING_APPROVAL: 1, OVERDUE: 2, REQUESTED: 3, SCHEDULED: 4, HOLD: 5, PAID: 6, CONFIRMED: 7, CANCELLED: 8 };
 
 export async function listPayments(actor: SessionUser, filter: string, q: string) {
+  // Visibility: admins see everything; users see only what they raised.
   const all = await prisma.payment.findMany({
+    where: actor.isAdmin ? {} : { requestedById: actor.id },
     include: { requestedBy: true, attachments: true },
     orderBy: { createdAt: "desc" },
   });
@@ -327,10 +371,9 @@ export async function listPayments(actor: SessionUser, filter: string, q: string
   const rows = all
     .filter((p) => {
       const eff = effectiveFor(p);
+      const waiting = eff === "REQUESTED" || eff === "AWAITING_APPROVAL" || eff === "RETURNED" || eff === "OVERDUE";
       if (filter === "mine" && p.requestedById !== actor.id) return false;
-      if (filter === "requested" && eff !== "REQUESTED") return false;
-      if (filter === "scheduled" && eff !== "SCHEDULED") return false;
-      if (filter === "overdue" && eff !== "OVERDUE") return false;
+      if (filter === "requested" && !waiting) return false;
       if (filter === "paid" && p.status !== "PAID" && p.status !== "CONFIRMED") return false;
       if (query) {
         const hay = `${p.payee} ${p.purpose} ${p.amount} ${p.requestedBy.name} ${p.payFrom}`.toLowerCase();

@@ -38,7 +38,7 @@ export async function runReminders(now: Date = new Date()): Promise<ReminderResu
   if (fresh.length === 0) return { ok: true, remindedPayments: 0, digestsSent: 0, requesterPings: 0 };
 
   // One digest to each payer listing everything still to pay.
-  const payers = await prisma.user.findMany({ where: { role: "PAYER" } });
+  const payers = await prisma.user.findMany({ where: { isPayer: true, active: true } });
   const total = fresh.reduce((s, p) => s + p.amount, 0n);
   const lines = fresh
     .map((p) => `• ${formatINR(p.amount)} to ${p.payee}${overdueFor(p) ? " (LATE)" : ""}`)

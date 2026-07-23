@@ -56,8 +56,14 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
 
 /** Send a push to all payers (there is one, but future-proof). */
 export async function sendPushToPayers(payload: PushPayload): Promise<void> {
-  const payers = await prisma.user.findMany({ where: { role: "PAYER" }, select: { id: true } });
+  const payers = await prisma.user.findMany({ where: { isPayer: true, active: true }, select: { id: true } });
   await Promise.all(payers.map((p) => sendPushToUser(p.id, payload)));
+}
+
+/** Send a push to all approvers. */
+export async function sendPushToApprovers(payload: PushPayload): Promise<void> {
+  const approvers = await prisma.user.findMany({ where: { isApprover: true, active: true }, select: { id: true } });
+  await Promise.all(approvers.map((p) => sendPushToUser(p.id, payload)));
 }
 
 export function vapidPublicKey(): string {

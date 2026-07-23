@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, isoDay, timeAgo,
-  type Card, type Detail, type Effective, type EventLite, type UserLite,
+  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
 import { enablePush, isPushEnabled, pushSupported, pushBlocked } from "@/lib/push-client";
@@ -31,6 +31,9 @@ export function PayTrackApp() {
   const [newOpen, setNewOpen] = useState(false);
   const [schedFor, setSchedFor] = useState<string | null>(null);
   const [paidFor, setPaidFor] = useState<string | null>(null);
+  const [editFor, setEditFor] = useState<Detail | null>(null);
+  const [rejectFor, setRejectFor] = useState<string | null>(null);
+  const [teamOpen, setTeamOpen] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
 
   const showToast = (msg: string, err = false) => setToast({ msg, err });
@@ -45,7 +48,10 @@ export function PayTrackApp() {
 
   const meQ = useQuery({ queryKey: ["me"], queryFn: api.me });
   const me = meQ.data?.me ?? null;
-  const isPayer = me?.role === "PAYER";
+  const isPayer = me?.isPayer ?? false;
+  const isApprover = me?.isApprover ?? false;
+  const isManager = me?.isManager ?? false;
+  const isAdmin = me?.isAdmin ?? false;
 
   // When the acting user changes (e.g. after login), default the filter by role
   // — payer sees everything, requesters land on their own — reset the selection,
@@ -55,7 +61,7 @@ export function PayTrackApp() {
     if (me && me.id !== lastUserId.current) {
       const switched = lastUserId.current !== null;
       lastUserId.current = me.id;
-      setFilter(me.role === "PAYER" ? "all" : "mine");
+      setFilter(me.role === "ADMIN" ? "all" : "mine");
       setSelected(null);
       if (switched) qc.invalidateQueries();
     }
@@ -112,14 +118,35 @@ export function PayTrackApp() {
   });
   const mCreate = useMutation({
     mutationFn: (form: FormData) => api.create(form),
-    onSuccess: (d) => { setNewOpen(false); setFilter("all"); refresh(); setSelected(d.payment.id); showToast("Payment added"); },
+    onSuccess: (d) => { setNewOpen(false); refresh(); setSelected(d.payment.id); showToast(isAdmin ? "Payment added" : "Sent to Jagat for approval"); },
+    onError: (e: Error) => showToast(e.message, true),
+  });
+  const mApprove = useMutation({
+    mutationFn: (id: string) => api.approve(id),
+    onSuccess: () => { refresh(); showToast("Approved · sent to the payer"); },
+    onError: (e: Error) => showToast(e.message, true),
+  });
+  const mReject = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => api.reject(id, reason),
+    onSuccess: () => { refresh(); setRejectFor(null); showToast("Returned to the person who raised it"); },
+    onError: (e: Error) => showToast(e.message, true),
+  });
+  const mResubmit = useMutation({
+    mutationFn: (id: string) => api.resubmit(id),
+    onSuccess: () => { refresh(); showToast("Resubmitted for approval"); },
+    onError: (e: Error) => showToast(e.message, true),
+  });
+  const mEdit = useMutation({
+    mutationFn: ({ id, form }: { id: string; form: FormData }) => api.edit(id, form),
+    onSuccess: (d) => { refresh(); setEditFor(null); setSelected(d.payment.id); showToast("Changes saved"); },
     onError: (e: Error) => showToast(e.message, true),
   });
 
   // ── derived list ──
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const rank: Record<Effective, number> = { OVERDUE: 0, REQUESTED: 1, SCHEDULED: 2, HOLD: 3, PAID: 4, CONFIRMED: 5, CANCELLED: 6 };
+    const rank: Record<Effective, number> = { RETURNED: 0, AWAITING_APPROVAL: 1, OVERDUE: 2, REQUESTED: 3, SCHEDULED: 4, HOLD: 5, PAID: 6, CONFIRMED: 7, CANCELLED: 8 };
+    const isWaiting = (e: Effective) => e === "REQUESTED" || e === "AWAITING_APPROVAL" || e === "RETURNED" || e === "OVERDUE";
     return all
       .filter((p) => {
         if (q) {
@@ -129,9 +156,7 @@ export function PayTrackApp() {
         if (filter === "all") return true;
         if (filter === "mine") return p.mine;
         if (filter === "paid") return p.effective === "PAID" || p.effective === "CONFIRMED";
-        if (filter === "requested") return p.effective === "REQUESTED";
-        if (filter === "scheduled") return p.effective === "SCHEDULED";
-        if (filter === "overdue") return p.effective === "OVERDUE";
+        if (filter === "requested") return isWaiting(p.effective);
         return true;
       })
       .sort((a, b) => (rank[a.effective] - rank[b.effective]) || (+new Date(a.dueDate) - +new Date(b.dueDate)));
@@ -140,9 +165,7 @@ export function PayTrackApp() {
   const counts = useMemo(() => ({
     all: all.length,
     mine: all.filter((p) => p.mine).length,
-    requested: all.filter((p) => p.effective === "REQUESTED").length,
-    scheduled: all.filter((p) => p.effective === "SCHEDULED").length,
-    overdue: all.filter((p) => p.effective === "OVERDUE").length,
+    requested: all.filter((p) => ["REQUESTED", "AWAITING_APPROVAL", "RETURNED", "OVERDUE"].includes(p.effective)).length,
     paid: all.filter((p) => p.effective === "PAID" || p.effective === "CONFIRMED").length,
   }), [all]);
 
@@ -167,9 +190,9 @@ export function PayTrackApp() {
     <ImageViewerCtx.Provider value={(src, name) => setLightbox({ src, name })}>
       <div className="frame">
         <div className="screen">
-          <TopBar me={me} onSignOut={() => signOutAction()} onAdd={() => setNewOpen(true)} onToast={showToast} onOpenPayment={(id) => setSelected(id)} />
-          <RemindBanner show={!!isPayer} all={all} />
-          <StatStrip all={all} isPayer={!!isPayer} />
+          <TopBar me={me} onSignOut={() => signOutAction()} onAdd={() => setNewOpen(true)} onToast={showToast} onOpenPayment={(id) => setSelected(id)} onTeam={isManager ? () => setTeamOpen(true) : undefined} />
+          <RemindBanner show={isPayer} all={all} />
+          <StatStrip all={all} isPayer={isPayer} isApprover={isApprover} isAdmin={isAdmin} />
           <div className="dots" id="stripDots"><i className="on" /><i /><i /><i /></div>
 
           <div className="body">
@@ -201,14 +224,21 @@ export function PayTrackApp() {
                   onHold={(id) => mHold.mutate(id)}
                   onConfirm={(id) => mConfirm.mutate(id)}
                   onNudge={(id) => mNudge.mutate(id)}
+                  onApprove={(id) => mApprove.mutate(id)}
+                  onReject={(id) => setRejectFor(id)}
+                  onResubmit={(id) => mResubmit.mutate(id)}
+                  onEdit={(p) => setEditFor(p)}
                 />
               </div>
             </div>
           </div>
 
           {newOpen && <NewSheet onClose={() => setNewOpen(false)} onSubmit={(f) => mCreate.mutate(f)} busy={mCreate.isPending} onError={(m) => showToast(m, true)} />}
+          {editFor && <NewSheet initial={editFor} onClose={() => setEditFor(null)} onSubmit={(f) => mEdit.mutate({ id: editFor.id, form: f })} busy={mEdit.isPending} onError={(m) => showToast(m, true)} />}
           {schedFor && <ScheduleSheet onClose={() => setSchedFor(null)} onSubmit={(date) => mSchedule.mutate({ id: schedFor, date })} busy={mSchedule.isPending} />}
           {paidFor && <PaidSheet onClose={() => setPaidFor(null)} onSubmit={(f) => mPay.mutate({ id: paidFor, form: f })} busy={mPay.isPending} onError={(m) => showToast(m, true)} />}
+          {rejectFor && <RejectSheet onClose={() => setRejectFor(null)} onSubmit={(reason) => mReject.mutate({ id: rejectFor, reason })} busy={mReject.isPending} />}
+          {teamOpen && <TeamSheet onClose={() => setTeamOpen(false)} onToast={showToast} />}
 
           <div className={`toast ${toast ? "on" : ""} ${toast?.err ? "err" : ""}`}>
             {!toast?.err && <IcCheck />}<span>{toast?.msg}</span>
@@ -240,18 +270,32 @@ function Lightbox({ img, onClose }: { img: { src: string; name: string } | null;
 }
 
 /* ── top bar ───────────────────────────────────────────────────────── */
-function TopBar({ me, onSignOut, onAdd, onToast, onOpenPayment }: { me: UserLite | null; onSignOut: () => void; onAdd: () => void; onToast: (msg: string, err?: boolean) => void; onOpenPayment: (id: string) => void }) {
+function roleLabel(me: MeUser | null): string {
+  if (!me) return "…";
+  if (me.isPayer) return "You pay the bills";
+  if (me.isApprover) return "You approve requests";
+  if (me.isManager) return "You manage the team";
+  if (me.isAdmin) return "Admin";
+  return "You raise payments";
+}
+function TopBar({ me, onSignOut, onAdd, onToast, onOpenPayment, onTeam }: { me: MeUser | null; onSignOut: () => void; onAdd: () => void; onToast: (msg: string, err?: boolean) => void; onOpenPayment: (id: string) => void; onTeam?: () => void }) {
   return (
     <header className="topbar">
       <div className="logo"><div className="mark">₹</div><div>PayTrack <small style={{ display: "block" }}>Go DinDin</small></div></div>
       <div className="spacer" />
+      {onTeam && (
+        <button className="teambtn" onClick={onTeam} title="Manage team">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" /></svg>
+          <span>Team</span>
+        </button>
+      )}
       <button className="btn btn-primary addbtn" onClick={onAdd}><IcPlus />Add a payment</button>
       <NotificationBell onToast={onToast} onOpenPayment={onOpenPayment} />
       <div className="me">
         <div className="avatar" style={{ background: colorFor(me?.name ?? "") }}>{me ? initials(me.name) : "?"}</div>
         <div>
           <div style={{ fontWeight: 700, fontSize: "12.5px" }}>{me?.name ?? "…"}</div>
-          <div className="role">{me?.role === "PAYER" ? "You pay the bills" : "You add payments"}</div>
+          <div className="role">{roleLabel(me)}</div>
         </div>
         <button className="signout" onClick={onSignOut} title="Sign out" aria-label="Sign out">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 17l5-5-5-5M21 12H9M12 19H5a2 2 0 01-2-2V7a2 2 0 012-2h7" /></svg>
@@ -380,27 +424,43 @@ function RemindBanner({ show, all }: { show: boolean; all: Card[] }) {
 function sumPaise(cards: Card[]): string {
   return fmtPaise(cards.reduce((s, p) => s + BigInt(p.amount), 0n).toString());
 }
-function StatStrip({ all, isPayer }: { all: Card[]; isPayer: boolean }) {
+function StatStrip({ all, isPayer, isApprover, isAdmin }: { all: Card[]; isPayer: boolean; isApprover: boolean; isAdmin: boolean }) {
   let cards: { lab: string; val: string | number; sub: string; ac: string; tint: string; ic: string }[];
+  const toApprove = all.filter((p) => p.status === "AWAITING_APPROVAL");
   if (isPayer) {
     const pend = all.filter((p) => ["REQUESTED", "SCHEDULED", "HOLD"].includes(p.status));
     const over = all.filter((p) => p.effective === "OVERDUE");
-    const dueToday = all.filter((p) => ["REQUESTED", "SCHEDULED"].includes(p.status) && fmtISODate(p.dueDate) === isoDay(0));
     cards = [
       { lab: "To pay", val: sumPaise(pend), sub: `${pend.length} waiting`, ac: "var(--brand)", tint: "var(--brand-soft)", ic: "💰" },
-      { lab: "Today", val: dueToday.length, sub: dueToday.length ? "pay these today" : "all clear", ac: "var(--sched)", tint: "var(--sched-soft)", ic: "📅" },
+      { lab: "To approve", val: toApprove.length, sub: toApprove.length ? "awaiting Jagat" : "all clear", ac: "var(--hold)", tint: "var(--hold-soft)", ic: "🕵️" },
       { lab: "Late", val: over.length, sub: over.length ? sumPaise(over) : "none late", ac: "var(--over)", tint: "var(--over-soft)", ic: "⚠️" },
       { lab: "Done", val: all.filter((p) => ["PAID", "CONFIRMED"].includes(p.status)).length, sub: "proof saved", ac: "var(--paid)", tint: "var(--paid-soft)", ic: "✅" },
     ];
+  } else if (isApprover) {
+    const pend = all.filter((p) => ["REQUESTED", "SCHEDULED", "HOLD"].includes(p.status));
+    cards = [
+      { lab: "To approve", val: toApprove.length, sub: toApprove.length ? sumPaise(toApprove) : "all clear", ac: "var(--hold)", tint: "var(--hold-soft)", ic: "🕵️" },
+      { lab: "With payer", val: pend.length, sub: "being paid", ac: "var(--brand)", tint: "var(--brand-soft)", ic: "💰" },
+      { lab: "Returned", val: all.filter((p) => p.status === "RETURNED").length, sub: "sent back", ac: "var(--over)", tint: "var(--over-soft)", ic: "↩️" },
+      { lab: "Done", val: all.filter((p) => ["PAID", "CONFIRMED"].includes(p.status)).length, sub: "finished", ac: "var(--paid)", tint: "var(--paid-soft)", ic: "✅" },
+    ];
+  } else if (isAdmin) {
+    const pend = all.filter((p) => ["REQUESTED", "SCHEDULED", "HOLD"].includes(p.status));
+    const over = all.filter((p) => p.effective === "OVERDUE");
+    cards = [
+      { lab: "In progress", val: pend.length, sub: pend.length ? sumPaise(pend) : "none", ac: "var(--brand)", tint: "var(--brand-soft)", ic: "💰" },
+      { lab: "Awaiting approval", val: toApprove.length, sub: toApprove.length ? "with Jagat" : "all clear", ac: "var(--hold)", tint: "var(--hold-soft)", ic: "🕵️" },
+      { lab: "Late", val: over.length, sub: over.length ? "overdue" : "on time", ac: "var(--over)", tint: "var(--over-soft)", ic: "⚠️" },
+      { lab: "Done", val: all.filter((p) => ["PAID", "CONFIRMED"].includes(p.status)).length, sub: "finished", ac: "var(--paid)", tint: "var(--paid-soft)", ic: "✅" },
+    ];
   } else {
     const mine = all.filter((p) => p.mine);
-    const pend = mine.filter((p) => ["REQUESTED", "SCHEDULED", "HOLD"].includes(p.status));
-    const over = mine.filter((p) => p.effective === "OVERDUE");
+    const returned = mine.filter((p) => p.status === "RETURNED");
     const toConf = mine.filter((p) => p.status === "PAID");
     cards = [
-      { lab: "To pay", val: pend.length, sub: pend.length ? sumPaise(pend) : "none waiting", ac: "var(--brand)", tint: "var(--brand-soft)", ic: "⏳" },
+      { lab: "For approval", val: mine.filter((p) => p.status === "AWAITING_APPROVAL").length, sub: "with Jagat", ac: "var(--hold)", tint: "var(--hold-soft)", ic: "🕵️" },
+      { lab: "Fix these", val: returned.length, sub: returned.length ? "edit & resubmit" : "none", ac: "var(--over)", tint: "var(--over-soft)", ic: "↩️" },
       { lab: "Check", val: toConf.length, sub: toConf.length ? "say you got it" : "none to check", ac: "var(--paid)", tint: "var(--paid-soft)", ic: "👀" },
-      { lab: "Late", val: over.length, sub: over.length ? "remind payer" : "on time", ac: "var(--over)", tint: "var(--over-soft)", ic: "⚠️" },
       { lab: "Done", val: mine.filter((p) => p.status === "CONFIRMED").length, sub: "finished", ac: "var(--paid)", tint: "var(--paid-soft)", ic: "✅" },
     ];
   }
@@ -456,11 +516,13 @@ function PaymentCard({ p, selected, onClick }: { p: Card; selected: boolean; onC
 }
 
 /* ── detail ────────────────────────────────────────────────────────── */
-function PaymentDetail(props: {
-  detail: Detail | null; me: UserLite | null; loading: boolean;
-  onBack: () => void; onSchedule: (id: string) => void; onPay: (id: string) => void;
-  onHold: (id: string) => void; onConfirm: (id: string) => void; onNudge: (id: string) => void;
-}) {
+interface DetailActions {
+  onSchedule: (id: string) => void; onPay: (id: string) => void; onHold: (id: string) => void;
+  onConfirm: (id: string) => void; onNudge: (id: string) => void;
+  onApprove: (id: string) => void; onReject: (id: string) => void; onResubmit: (id: string) => void;
+  onEdit: (p: Detail) => void;
+}
+function PaymentDetail(props: { detail: Detail | null; me: MeUser | null; loading: boolean; onBack: () => void } & DetailActions) {
   const { detail: p, me } = props;
   if (!p) {
     return (
@@ -497,12 +559,12 @@ function PaymentDetail(props: {
         <div className="cell"><div className="k">Amount</div><div className="v">{fmtPaise(p.amount)}</div></div>
       </div>
       <div className="thread">{p.events.map((e) => <ThreadMsg key={e.id} ev={e} />)}</div>
-      <Actions p={p} me={me} onSchedule={props.onSchedule} onPay={props.onPay} onHold={props.onHold} onConfirm={props.onConfirm} onNudge={props.onNudge} />
+      <Actions p={p} me={me} act={props} />
     </>
   );
 }
 
-const SYS_TYPES = new Set(["SCHEDULE", "CONFIRM", "HOLD", "CANCEL", "NUDGE", "REMINDER"]);
+const SYS_TYPES = new Set(["SCHEDULE", "CONFIRM", "HOLD", "CANCEL", "NUDGE", "REMINDER", "APPROVE", "RETURN", "RESUBMIT"]);
 function ThreadMsg({ ev }: { ev: EventLite }) {
   if (SYS_TYPES.has(ev.type) && !ev.attachment) {
     const ic = ev.type === "CONFIRM" ? <IcCheck /> : <IcClock />;
@@ -543,50 +605,60 @@ function AttachmentView({ a }: { a: { id: string; kind: string; originalName: st
   );
 }
 
-function Actions(props: {
-  p: Detail; me: UserLite | null;
-  onSchedule: (id: string) => void; onPay: (id: string) => void; onHold: (id: string) => void; onConfirm: (id: string) => void; onNudge: (id: string) => void;
-}) {
-  const { p, me } = props;
+function Actions({ p, me, act }: { p: Detail; me: MeUser | null; act: DetailActions }) {
   const eff = p.effective;
-  const isPayer = me?.role === "PAYER";
+  const isPayer = !!me?.isPayer;
+  const isApprover = !!me?.isApprover;
   const mine = me?.id === p.requestedBy.id;
+  const disabled = (label: string) => <button className="btn btn-ghost" disabled style={{ opacity: .55 }}>{label}</button>;
   let hint = ""; let btns: React.ReactNode = null;
 
-  if (isPayer) {
+  if (p.status === "AWAITING_APPROVAL") {
+    if (isApprover) {
+      hint = "Review this request — approve it, or send it back for changes.";
+      btns = (<>
+        <button className="btn btn-ghost" onClick={() => act.onReject(p.id)}>↩️ Return</button>
+        <button className="btn btn-primary" onClick={() => act.onApprove(p.id)}>✓ Approve</button>
+      </>);
+    } else if (mine) {
+      hint = "Waiting for Jagat to approve. You can still edit it.";
+      btns = <button className="btn btn-sched" onClick={() => act.onEdit(p)}>✏️ Edit</button>;
+    } else { hint = "Waiting for Jagat to approve."; btns = disabled("Awaiting approval"); }
+  } else if (p.status === "RETURNED") {
+    if (mine) {
+      hint = "Jagat returned this for changes. Edit it, then resubmit.";
+      btns = (<>
+        <button className="btn btn-sched" onClick={() => act.onEdit(p)}>✏️ Edit</button>
+        <button className="btn btn-primary" onClick={() => act.onResubmit(p.id)}>↥ Resubmit</button>
+      </>);
+    } else { hint = `Returned to ${p.requestedBy.name} for changes.`; btns = disabled("Returned"); }
+  } else if (isPayer) {
     if (eff === "REQUESTED" || (eff === "OVERDUE" && p.status === "REQUESTED")) {
       hint = "Pick a day to pay, or pay it now.";
       btns = (<>
-        <button className="btn btn-sched" onClick={() => props.onSchedule(p.id)}>📅 Pick a day</button>
-        <button className="btn btn-paid" onClick={() => props.onPay(p.id)}>✓ I paid this</button>
+        <button className="btn btn-sched" onClick={() => act.onSchedule(p.id)}>📅 Pick a day</button>
+        <button className="btn btn-paid" onClick={() => act.onPay(p.id)}>✓ I paid this</button>
       </>);
     } else if (eff === "SCHEDULED" || (eff === "OVERDUE" && p.status === "SCHEDULED")) {
       hint = p.scheduledFor ? `Planned for ${fmtShort(p.scheduledFor)}.` : "A day is planned.";
-      btns = <button className="btn btn-paid" onClick={() => props.onPay(p.id)}>✓ I paid this</button>;
-    } else if (eff === "PAID") {
-      hint = `Paid. Now ${p.requestedBy.name} needs to say they got it.`;
-      btns = <button className="btn btn-ghost" disabled style={{ opacity: .55 }}>Waiting for {p.requestedBy.name}</button>;
-    } else if (eff === "CONFIRMED") {
-      hint = "All finished — paid and confirmed."; btns = <button className="btn btn-ghost" disabled style={{ opacity: .55 }}>✅ Finished</button>;
+      btns = <button className="btn btn-paid" onClick={() => act.onPay(p.id)}>✓ I paid this</button>;
     } else if (eff === "HOLD") {
-      hint = "Waiting on missing details before you can pay."; btns = <button className="btn btn-paid" onClick={() => props.onPay(p.id)}>✓ I paid this</button>;
-    } else if (eff === "CANCELLED") {
-      hint = "This payment was cancelled."; btns = <button className="btn btn-ghost" disabled style={{ opacity: .55 }}>Cancelled</button>;
-    }
-  } else {
-    if (!mine) {
-      hint = `${p.requestedBy.name} asked for this one. You are only looking.`;
-      btns = <button className="btn btn-ghost" disabled style={{ opacity: .55 }}>Just looking</button>;
+      hint = "Waiting on missing details before you can pay."; btns = <button className="btn btn-paid" onClick={() => act.onPay(p.id)}>✓ I paid this</button>;
     } else if (eff === "PAID") {
+      hint = `Paid. Now ${p.requestedBy.name} needs to say they got it.`; btns = disabled(`Waiting for ${p.requestedBy.name}`);
+    } else if (eff === "CONFIRMED") { hint = "All finished — paid and confirmed."; btns = disabled("✅ Finished"); }
+    else if (eff === "CANCELLED") { hint = "This payment was cancelled."; btns = disabled("Cancelled"); }
+  } else {
+    // requester / other admin view
+    if (eff === "PAID" && mine) {
       hint = "Paid, with the proof attached. Look, then say you got it.";
-      btns = <button className="btn btn-conf" onClick={() => props.onConfirm(p.id)}>✓ Yes, I got it</button>;
-    } else if (eff === "CONFIRMED") {
-      hint = "You said you got it. All finished."; btns = <button className="btn btn-ghost" disabled style={{ opacity: .55 }}>✅ Finished</button>;
-    } else if (eff === "CANCELLED") {
-      hint = "This payment was cancelled."; btns = <button className="btn btn-ghost" disabled style={{ opacity: .55 }}>Cancelled</button>;
-    } else {
-      hint = eff === "OVERDUE" ? "This one is late. Send a reminder." : "Sent to the payer. You'll be told as it changes.";
-      btns = <button className="btn btn-sched" onClick={() => props.onNudge(p.id)}>🔔 Send a reminder</button>;
+      btns = <button className="btn btn-conf" onClick={() => act.onConfirm(p.id)}>✓ Yes, I got it</button>;
+    } else if (eff === "CONFIRMED") { hint = mine ? "You said you got it. All finished." : "Finished."; btns = disabled("✅ Finished"); }
+    else if (eff === "CANCELLED") { hint = "This payment was cancelled."; btns = disabled("Cancelled"); }
+    else if (eff === "PAID") { hint = `Paid — waiting for ${p.requestedBy.name} to confirm.`; btns = disabled(`Waiting for ${p.requestedBy.name}`); }
+    else {
+      hint = mine ? "Approved — with the payer now. You'll be told as it changes." : `Raised by ${p.requestedBy.name}. With the payer now.`;
+      btns = <button className="btn btn-sched" onClick={() => act.onNudge(p.id)}>🔔 Send a reminder</button>;
     }
   }
   return <div className="actions"><span className="hint"><IcInfo />{hint}</span>{btns}</div>;
@@ -628,13 +700,15 @@ function Sheet({ title, children, foot, onClose }: { title: string; children: Re
   );
 }
 
-function NewSheet({ onClose, onSubmit, busy, onError }: { onClose: () => void; onSubmit: (f: FormData) => void; busy: boolean; onError: (m: string) => void }) {
-  const [amt, setAmt] = useState("");
-  const [payee, setPayee] = useState("");
-  const [payFrom, setPayFrom] = useState("Peliswan");
-  const [purpose, setPurpose] = useState("");
-  const [upi, setUpi] = useState("");
-  const [due, setDue] = useState(isoDay(2));
+const titleCase = (s: string) => s.charAt(0) + s.slice(1).toLowerCase();
+function NewSheet({ onClose, onSubmit, busy, onError, initial }: { onClose: () => void; onSubmit: (f: FormData) => void; busy: boolean; onError: (m: string) => void; initial?: Detail }) {
+  const editing = !!initial;
+  const [amt, setAmt] = useState(initial ? (Number(initial.amount) / 100).toLocaleString("en-IN") : "");
+  const [payee, setPayee] = useState(initial?.payee ?? "");
+  const [payFrom, setPayFrom] = useState(initial ? titleCase(initial.payFrom) : "Peliswan");
+  const [purpose, setPurpose] = useState(initial?.purpose ?? "");
+  const [upi, setUpi] = useState(initial?.upi ?? "");
+  const [due, setDue] = useState(initial ? initial.dueDate.slice(0, 10) : isoDay(2));
   const [file, setFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   usePasteImage(setFile);
@@ -654,8 +728,8 @@ function NewSheet({ onClose, onSubmit, busy, onError }: { onClose: () => void; o
     onSubmit(f);
   }
   return (
-    <Sheet title="Add a payment" onClose={onClose}
-      foot={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={submit} disabled={busy}>{busy ? "Adding…" : "Add payment"}</button></>}>
+    <Sheet title={editing ? "Edit request" : "Add a payment"} onClose={onClose}
+      foot={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={submit} disabled={busy}>{busy ? "Saving…" : editing ? "Save changes" : "Add payment"}</button></>}>
       <div className="two">
         <div className="fld"><label>How much?</label><div className="amtin"><span>₹</span>
           <input inputMode="numeric" placeholder="45,000" value={amt} onChange={(e) => { const n = parseInt(e.target.value.replace(/[^0-9]/g, "") || "0", 10); setAmt(n ? n.toLocaleString("en-IN") : ""); }} /></div></div>
@@ -722,6 +796,76 @@ function PaidSheet({ onClose, onSubmit, busy, onError }: { onClose: () => void; 
         {file && <div className="attached">📎 {file.name} attached</div>}
       </div>
       <div className="fld"><label>Note <span style={{ color: "var(--ink-3)", fontWeight: 500 }}>(optional)</span></label><input placeholder="e.g. paid by UPI" value={note} onChange={(e) => setNote(e.target.value)} /></div>
+    </Sheet>
+  );
+}
+
+function RejectSheet({ onClose, onSubmit, busy }: { onClose: () => void; onSubmit: (reason: string) => void; busy: boolean }) {
+  const [reason, setReason] = useState("");
+  return (
+    <Sheet title="Return for changes" onClose={onClose}
+      foot={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={() => onSubmit(reason.trim())} disabled={busy}>{busy ? "Sending…" : "Return to them"}</button></>}>
+      <p>Tell them what needs fixing. They can edit and resubmit it for approval.</p>
+      <div className="fld"><label>Reason <span style={{ color: "var(--ink-3)", fontWeight: 500 }}>(optional)</span></label>
+        <textarea rows={3} placeholder="e.g. wrong account, attach the bill…" value={reason} onChange={(e) => setReason(e.target.value)} /></div>
+    </Sheet>
+  );
+}
+
+/* Account management (manager only). */
+function TeamSheet({ onClose, onToast }: { onClose: () => void; onToast: (m: string, err?: boolean) => void }) {
+  const qc = useQueryClient();
+  const usersQ = useQuery({ queryKey: ["team"], queryFn: api.teamList });
+  const users = usersQ.data?.users ?? [];
+  const [showNew, setShowNew] = useState(false);
+  const [name, setName] = useState(""); const [loginId, setLoginId] = useState(""); const [pw, setPw] = useState(""); const [role, setRole] = useState<Role>("USER");
+
+  const mCreate = useMutation({
+    mutationFn: () => api.teamCreate({ name: name.trim(), loginId: loginId.trim(), password: pw, role }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["team"] }); setShowNew(false); setName(""); setLoginId(""); setPw(""); setRole("USER"); onToast("User created"); },
+    onError: (e: Error) => onToast(e.message, true),
+  });
+  const mPass = useMutation({ mutationFn: ({ id, password }: { id: string; password: string }) => api.teamSetPassword(id, password), onSuccess: () => onToast("Password reset"), onError: (e: Error) => onToast(e.message, true) });
+  const mActive = useMutation({ mutationFn: ({ id, active }: { id: string; active: boolean }) => api.teamSetActive(id, active), onSuccess: () => qc.invalidateQueries({ queryKey: ["team"] }), onError: (e: Error) => onToast(e.message, true) });
+
+  function resetPw(u: TeamUser) {
+    const p = window.prompt(`New password for ${u.name} (${u.email}):`);
+    if (p === null) return;
+    if (p.length < 6) { onToast("Password must be at least 6 characters", true); return; }
+    mPass.mutate({ id: u.id, password: p });
+  }
+
+  return (
+    <Sheet title="Team" onClose={onClose} foot={<button className="btn btn-ghost" onClick={onClose}>Close</button>}>
+      {showNew ? (
+        <>
+          <div className="fld"><label>Name</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" /></div>
+          <div className="fld"><label>Login ID</label><input value={loginId} onChange={(e) => setLoginId(e.target.value)} placeholder="name@payment.com" /></div>
+          <div className="fld"><label>Password</label><input value={pw} onChange={(e) => setPw(e.target.value)} placeholder="at least 6 characters" /></div>
+          <div className="fld"><label>Role</label><select value={role} onChange={(e) => setRole(e.target.value as Role)}><option value="USER">User (needs approval)</option><option value="ADMIN">Admin (sees everything)</option></select></div>
+          <div style={{ display: "flex", gap: 9, marginTop: 4 }}>
+            <button className="btn btn-ghost" onClick={() => setShowNew(false)}>Back</button>
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => mCreate.mutate()} disabled={mCreate.isPending || !name.trim() || loginId.length < 3 || pw.length < 6}>{mCreate.isPending ? "Creating…" : "Create user"}</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <button className="btn btn-primary" onClick={() => setShowNew(true)}><IcPlus />Add user</button>
+          <div className="teamlist">
+            {users.map((u) => (
+              <div key={u.id} className={`teamrow ${u.active ? "" : "off"}`}>
+                <div className="tav" style={{ background: colorFor(u.name) }}>{initials(u.name)}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="tname">{u.name}{!u.active && <span className="tinactive">inactive</span>}</div>
+                  <div className="temail">{u.email} · {u.role === "ADMIN" ? "Admin" : "User"}{u.isPayer ? " · payer" : ""}{u.isApprover ? " · approver" : ""}{u.isManager ? " · manager" : ""}</div>
+                </div>
+                <button className="tbtn" onClick={() => resetPw(u)} title="Reset password">🔑</button>
+                <button className="tbtn" onClick={() => mActive.mutate({ id: u.id, active: !u.active })} title={u.active ? "Deactivate" : "Reactivate"}>{u.active ? "🚫" : "↺"}</button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </Sheet>
   );
 }

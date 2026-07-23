@@ -12,8 +12,8 @@ datasource db {
 }
 
 enum Role {
-  PAYER
-  REQUESTER
+  ADMIN
+  USER
 }
 
 enum PayAccount {
@@ -24,6 +24,8 @@ enum PayAccount {
 }
 
 enum Status {
+  AWAITING_APPROVAL
+  RETURNED
   REQUESTED
   SCHEDULED
   PAID
@@ -39,6 +41,10 @@ enum AttachmentKind {
 
 enum EventType {
   REQUEST
+  APPROVE
+  RETURN
+  RESUBMIT
+  EDIT
   SCHEDULE
   PAY
   CONFIRM
@@ -54,6 +60,10 @@ model User {
   name           String
   email          String    @unique
   role           Role
+  isPayer        Boolean   @default(false)
+  isApprover     Boolean   @default(false)
+  isManager      Boolean   @default(false)
+  active         Boolean   @default(true)
   telegramChatId String?
   passwordHash   String?
   emailVerified  DateTime?
@@ -63,6 +73,7 @@ model User {
   requested   Payment[]      @relation("requestedBy")
   paid        Payment[]      @relation("paidBy")
   confirmed   Payment[]      @relation("confirmedBy")
+  approved    Payment[]      @relation("approvedBy")
   events      PaymentEvent[]
   attachments Attachment[]
 
@@ -129,6 +140,7 @@ model Payment {
   status        Status    @default(REQUESTED)
   dueDate       DateTime
   scheduledFor  DateTime?
+  approvedAt    DateTime?
   paidAt        DateTime?
   confirmedAt   DateTime?
   lastRemindedAt DateTime?
@@ -137,6 +149,8 @@ model Payment {
 
   requestedById String
   requestedBy   User    @relation("requestedBy", fields: [requestedById], references: [id])
+  approvedById  String?
+  approvedBy    User?   @relation("approvedBy", fields: [approvedById], references: [id])
   paidById      String?
   paidBy        User?   @relation("paidBy", fields: [paidById], references: [id])
   confirmedById String?

@@ -8,6 +8,8 @@
 // Prisma enums, so route handlers can pass Prisma enum values directly.
 
 export type Status =
+  | "AWAITING_APPROVAL"
+  | "RETURNED"
   | "REQUESTED"
   | "SCHEDULED"
   | "PAID"
@@ -15,10 +17,14 @@ export type Status =
   | "HOLD"
   | "CANCELLED";
 
-export type Role = "PAYER" | "REQUESTER";
+export type Role = "ADMIN" | "USER";
 
 export type EventType =
   | "REQUEST"
+  | "APPROVE"
+  | "RETURN"
+  | "RESUBMIT"
+  | "EDIT"
   | "SCHEDULE"
   | "PAY"
   | "CONFIRM"
@@ -32,6 +38,8 @@ export type EffectiveStatus = Status | "OVERDUE";
 
 /** Allowed transitions. Anything not listed here is rejected. */
 export const TRANSITIONS: Record<Status, Status[]> = {
+  AWAITING_APPROVAL: ["REQUESTED", "RETURNED", "CANCELLED"],
+  RETURNED: ["AWAITING_APPROVAL", "CANCELLED"],
   REQUESTED: ["SCHEDULED", "PAID", "HOLD", "CANCELLED"],
   SCHEDULED: ["PAID", "HOLD"],
   HOLD: ["SCHEDULED", "PAID"],
@@ -42,15 +50,20 @@ export const TRANSITIONS: Record<Status, Status[]> = {
 
 export const TERMINAL: ReadonlySet<Status> = new Set<Status>(["CONFIRMED", "CANCELLED"]);
 
-/** EventType logged for each target status. */
-const EVENT_FOR: Record<Status, EventType> = {
-  SCHEDULED: "SCHEDULE",
-  PAID: "PAY",
-  HOLD: "HOLD",
-  CANCELLED: "CANCEL",
-  CONFIRMED: "CONFIRM",
-  REQUESTED: "REQUEST",
-};
+/** EventType logged for a transition (depends on where it comes from). */
+function eventFor(from: Status, to: Status): EventType {
+  switch (to) {
+    case "REQUESTED": return "APPROVE"; // reached (via transition) only by approving
+    case "RETURNED": return "RETURN";
+    case "AWAITING_APPROVAL": return "RESUBMIT";
+    case "SCHEDULED": return "SCHEDULE";
+    case "PAID": return "PAY";
+    case "HOLD": return "HOLD";
+    case "CANCELLED": return "CANCEL";
+    case "CONFIRMED": return "CONFIRM";
+    default: return "NOTE";
+  }
+}
 
 export type TransitionErrorCode =
   | "ILLEGAL_TRANSITION"
@@ -79,7 +92,9 @@ export interface PaymentLike {
 
 export interface Actor {
   id: string;
-  role: Role;
+  isPayer?: boolean;
+  isApprover?: boolean;
+  isAdmin?: boolean;
 }
 
 export interface TransitionContext {
@@ -97,6 +112,8 @@ export interface TransitionResult {
   patch: {
     status: Status;
     scheduledFor?: Date;
+    approvedById?: string;
+    approvedAt?: Date;
     paidById?: string;
     paidAt?: Date;
     confirmedById?: string;
@@ -104,27 +121,35 @@ export interface TransitionResult {
   };
 }
 
-function isRaisingRequester(payment: PaymentLike, actor: Actor): boolean {
-  return actor.role === "REQUESTER" && actor.id === payment.requestedById;
+function isRaiser(payment: PaymentLike, actor: Actor): boolean {
+  return actor.id === payment.requestedById;
 }
 
-/** Actor authorization per target status. Throws on failure. */
+/** Actor authorization per target status. Throws on failure. Capability-based:
+ *  isPayer schedules/pays/holds; isApprover approves/returns; the raiser
+ *  resubmits and confirms; payer or raiser cancels. */
 function assertActor(payment: PaymentLike, to: Status, actor: Actor): void {
   switch (to) {
     case "SCHEDULED":
     case "PAID":
     case "HOLD":
-      if (actor.role !== "PAYER") {
-        throw new TransitionError("FORBIDDEN_ACTOR", "Only the payer can schedule, pay, or hold a payment.");
-      }
-      return;
+      if (actor.isPayer) return;
+      throw new TransitionError("FORBIDDEN_ACTOR", "Only the payer can schedule, pay, or hold a payment.");
+    case "REQUESTED": // approve (AWAITING_APPROVAL -> REQUESTED)
+      if (actor.isApprover) return;
+      throw new TransitionError("FORBIDDEN_ACTOR", "Only the approver can approve a payment.");
+    case "RETURNED": // reject
+      if (actor.isApprover) return;
+      throw new TransitionError("FORBIDDEN_ACTOR", "Only the approver can return a payment.");
+    case "AWAITING_APPROVAL": // resubmit
+      if (isRaiser(payment, actor)) return;
+      throw new TransitionError("FORBIDDEN_ACTOR", "Only the person who raised it can resubmit.");
     case "CANCELLED":
-      // Payer, or the requester who raised it.
-      if (actor.role === "PAYER" || isRaisingRequester(payment, actor)) return;
-      throw new TransitionError("FORBIDDEN_ACTOR", "Only the payer or the requester who raised it can cancel.");
+      if (actor.isPayer || isRaiser(payment, actor)) return;
+      throw new TransitionError("FORBIDDEN_ACTOR", "Only the payer or the person who raised it can cancel.");
     case "CONFIRMED":
-      if (isRaisingRequester(payment, actor)) return;
-      throw new TransitionError("FORBIDDEN_ACTOR", "Only the requester who raised this payment can confirm receipt.");
+      if (isRaiser(payment, actor)) return;
+      throw new TransitionError("FORBIDDEN_ACTOR", "Only the person who raised this payment can confirm receipt.");
     default:
       throw new TransitionError("ILLEGAL_TRANSITION", `Unsupported target status: ${to}`);
   }
@@ -173,12 +198,18 @@ export function transition(
     patch.paidAt = new Date();
   }
 
+  // Approve = AWAITING_APPROVAL -> REQUESTED: record the approver.
+  if (to === "REQUESTED") {
+    patch.approvedById = actor.id;
+    patch.approvedAt = new Date();
+  }
+
   if (to === "CONFIRMED") {
     patch.confirmedById = actor.id;
     patch.confirmedAt = new Date();
   }
 
-  return { from, to, eventType: EVENT_FOR[to], patch };
+  return { from, to, eventType: eventFor(from, to), patch };
 }
 
 /** Whether this payment can be transitioned to `to` by `actor` (no throw). */

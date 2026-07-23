@@ -1,13 +1,23 @@
 // Browser-side API client + UI helpers for the React app.
 import { formatINR, wordsINR } from "@/lib/money";
 
-export type Status = "REQUESTED" | "SCHEDULED" | "PAID" | "CONFIRMED" | "HOLD" | "CANCELLED";
+export type Status = "AWAITING_APPROVAL" | "RETURNED" | "REQUESTED" | "SCHEDULED" | "PAID" | "CONFIRMED" | "HOLD" | "CANCELLED";
 export type Effective = Status | "OVERDUE";
-export type Role = "PAYER" | "REQUESTER";
+export type Role = "ADMIN" | "USER";
 
 export interface UserLite { id: string; name: string; role: Role }
-export interface UserWithEmail extends UserLite { email: string }
-export interface Me { me: UserLite | null; users: UserWithEmail[] }
+export interface MeUser extends UserLite {
+  email: string;
+  isAdmin: boolean;
+  isPayer: boolean;
+  isApprover: boolean;
+  isManager: boolean;
+}
+export interface TeamUser {
+  id: string; name: string; email: string; role: Role; active: boolean;
+  isPayer: boolean; isApprover: boolean; isManager: boolean;
+}
+export interface Me { me: MeUser | null }
 
 export interface Card {
   id: string;
@@ -97,8 +107,23 @@ export const api = {
       headers: { "idempotency-key": idempotencyKey },
     }),
   nudge: (id: string) => req<{ payment: Detail }>(`/api/v1/payments/${id}/nudge`, { method: "POST" }),
+  approve: (id: string) => req<{ payment: Detail }>(`/api/v1/payments/${id}/approve`, { method: "POST" }),
+  reject: (id: string, reason: string) =>
+    req<{ payment: Detail }>(`/api/v1/payments/${id}/reject`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason }),
+    }),
+  resubmit: (id: string) => req<{ payment: Detail }>(`/api/v1/payments/${id}/resubmit`, { method: "POST" }),
+  edit: (id: string, form: FormData) => req<{ payment: Detail }>(`/api/v1/payments/${id}`, { method: "PUT", body: form }),
   notifications: () => req<NotificationsResponse>("/api/v1/notifications"),
   markNotificationsRead: () => req<{ ok: true }>("/api/v1/notifications/read", { method: "POST" }),
+  // team management (manager only)
+  teamList: () => req<{ users: TeamUser[] }>("/api/v1/users"),
+  teamCreate: (body: { name: string; loginId: string; password: string; role: Role }) =>
+    req<{ user: TeamUser }>("/api/v1/users", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+  teamSetPassword: (id: string, password: string) =>
+    req<{ ok: true }>(`/api/v1/users/${id}/password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) }),
+  teamSetActive: (id: string, active: boolean) =>
+    req<{ ok: true }>(`/api/v1/users/${id}/active`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ active }) }),
 };
 
 // ── UI helpers ───────────────────────────────────────────────────────
@@ -111,6 +136,8 @@ export const initials = (s: string): string =>
   s.replace("@", "").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
 export const STATUS: Record<Effective, { lab: string; cls: string; ic: string }> = {
+  AWAITING_APPROVAL: { lab: "Needs approval", cls: "st-appr", ic: "🕵️" },
+  RETURNED: { lab: "Returned", cls: "st-ret", ic: "↩️" },
   REQUESTED: { lab: "Waiting", cls: "st-new", ic: "⏳" },
   SCHEDULED: { lab: "Planned", cls: "st-sched", ic: "📅" },
   PAID: { lab: "Paid", cls: "st-paid", ic: "✓" },

@@ -4,16 +4,23 @@ import { prisma } from "@/lib/db";
 import type { SessionUser } from "@/lib/session";
 import type { Prisma } from "@/generated/prisma";
 
-// The payer cares about incoming requests, nudges and confirmations.
-const PAYER_TYPES = ["REQUEST", "NUDGE", "CONFIRM"] as const;
-
 function whereFor(user: SessionUser): Prisma.PaymentEventWhereInput {
   const or: Prisma.PaymentEventWhereInput[] = [
     // Anything that happens on a payment this user raised.
     { payment: { requestedById: user.id } },
   ];
-  if (user.role === "PAYER") {
-    or.push({ type: { in: [...PAYER_TYPES] } });
+  if (user.isApprover) {
+    // Requests/resubmissions that need approval (user-raised).
+    or.push({ type: "REQUEST", payment: { requestedBy: { role: "USER" } } });
+    or.push({ type: "RESUBMIT" });
+  }
+  if (user.isPayer) {
+    // Payments that have reached the payer: approvals, admin-raised requests,
+    // plus nudges and receipt confirmations.
+    or.push({ type: "APPROVE" });
+    or.push({ type: "REQUEST", payment: { requestedBy: { role: "ADMIN" } } });
+    or.push({ type: "NUDGE" });
+    or.push({ type: "CONFIRM" });
   }
   return {
     actorId: { not: user.id }, // never notify someone about their own action
