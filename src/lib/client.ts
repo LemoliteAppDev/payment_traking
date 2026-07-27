@@ -189,6 +189,23 @@ export const fmtStamp = (dateISO: string): string =>
 export const fmtShort = (dateISO: string): string =>
   new Date(dateISO).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 
+/**
+ * Urgency sort key: smaller = more urgent, shown higher.
+ *  - Overdue  → negative (the more overdue, the smaller / higher up)
+ *  - Due today → 0
+ *  - Upcoming → positive (days until due)
+ *  - Paid / Done / Cancelled → +Infinity (drop to the bottom)
+ * Ties are broken by newest-first at the call site.
+ */
+export function dueRank(p: { status: Status; dueDate: string }): number {
+  if (p.status === "PAID" || p.status === "CONFIRMED" || p.status === "CANCELLED") return Number.POSITIVE_INFINITY;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(p.dueDate);
+  due.setHours(0, 0, 0, 0);
+  return Math.round((due.getTime() - today.getTime()) / DAY);
+}
+
 export function isoDay(offset = 0): string {
   const d = new Date();
   d.setHours(0, 0, 0, 0);

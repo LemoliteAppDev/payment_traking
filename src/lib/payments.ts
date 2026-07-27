@@ -396,6 +396,16 @@ export async function nudgePayment(paymentId: string, actor: SessionUser): Promi
 }
 
 // ── List with server-side filter + search ────────────────────────────
+// Urgency key: overdue < due-today < upcoming < paid/done (see dueRank in client.ts).
+const DAY_MS = 86400000;
+function dueRankOf(p: { status: string; dueDate: Date }): number {
+  if (p.status === "PAID" || p.status === "CONFIRMED" || p.status === "CANCELLED") return Number.POSITIVE_INFINITY;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(p.dueDate);
+  due.setHours(0, 0, 0, 0);
+  return Math.round((due.getTime() - today.getTime()) / DAY_MS);
+}
 
 export async function listPayments(actor: SessionUser, filter: string, q: string) {
   // Visibility: admins see everything; users see only what they raised.
@@ -419,8 +429,12 @@ export async function listPayments(actor: SessionUser, filter: string, q: string
       }
       return true;
     })
-    // Newest first: most recent entry on top, older ones below.
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    // Urgent on top (overdue → due today → upcoming → paid/done), newest-first within each.
+    .sort((a, b) => {
+      const ua = dueRankOf(a), ub = dueRankOf(b);
+      if (ua !== ub) return ua - ub;
+      return b.createdAt.getTime() - a.createdAt.getTime();
+    });
 
   return rows.map((p) => ({
     id: p.id,

@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, isoDay, timeAgo,
+  api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, isoDay, timeAgo, dueRank,
   type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
@@ -163,7 +163,12 @@ export function PayTrackApp() {
         if (filter === "requested") return isWaiting(p.effective);
         return true;
       })
-      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+      // Urgent on top (overdue → due today → upcoming → paid/done), newest-first within each.
+      .sort((a, b) => {
+        const ua = dueRank(a), ub = dueRank(b);
+        if (ua !== ub) return ua - ub;
+        return +new Date(b.createdAt) - +new Date(a.createdAt);
+      });
   }, [all, filter, search]);
 
   const counts = useMemo(() => ({
