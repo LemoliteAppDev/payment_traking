@@ -43,6 +43,13 @@ a{color:inherit}
 .signout{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--ink-3);flex:none;margin-left:2px;transition:.15s}
 .signout:hover{background:var(--surface-3);color:var(--over)}
 .signout svg{width:16px;height:16px}
+.notifprompt{display:flex;align-items:center;gap:11px;padding:11px 16px;background:var(--brand-soft);border-bottom:1px solid #BEE6DF;color:var(--brand-ink);font-size:13px;font-weight:600;flex:none}
+.notifprompt .np-ic{font-size:16px;flex:none}
+.notifprompt .np-txt{flex:1;min-width:0;line-height:1.35}
+.notifprompt .np-enable{padding:8px 16px;font-size:12.5px;flex:none}
+.notifprompt .np-x{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:var(--brand-ink);opacity:.55;flex:none;font-size:13px}
+.notifprompt .np-x:hover{opacity:1;background:rgba(7,92,83,.1)}
+
 .notifwrap{position:relative;flex:none}
 .bell{position:relative;width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:var(--ink-3);flex:none;transition:.15s;background:var(--surface-2);border:1px solid var(--line)}
 .bell:hover{color:var(--brand);border-color:var(--brand-soft)}

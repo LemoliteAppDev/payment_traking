@@ -191,6 +191,7 @@ export function PayTrackApp() {
       <div className="frame">
         <div className="screen">
           <TopBar me={me} onSignOut={() => signOutAction()} onAdd={() => setNewOpen(true)} onToast={showToast} onOpenPayment={(id) => setSelected(id)} onTeam={isManager ? () => setTeamOpen(true) : undefined} />
+          {me && <NotifyPrompt onToast={showToast} />}
           <RemindBanner show={isPayer} all={all} />
           <StatStrip all={all} isPayer={isPayer} isApprover={isApprover} isAdmin={isAdmin} />
           <div className="dots" id="stripDots"><i className="on" /><i /><i /><i /></div>
@@ -402,6 +403,38 @@ function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, e
 }
 
 /* ── reminder banner (payer) ───────────────────────────────────────── */
+/* Prominent one-click prompt to turn on notifications (shown until enabled). */
+function NotifyPrompt({ onToast }: { onToast: (msg: string, err?: boolean) => void }) {
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!pushSupported() || pushBlocked()) return;
+    if (sessionStorage.getItem("notifPromptDismissed")) return;
+    isPushEnabled().then((on) => { if (!on) setShow(true); });
+  }, []);
+  if (!show) return null;
+
+  async function enable() {
+    setBusy(true);
+    const r = await enablePush();
+    setBusy(false);
+    if (r === "enabled") { setShow(false); onToast("Notifications are on"); }
+    else if (r === "denied") { setShow(false); onToast("You blocked notifications — allow them in your browser's site settings.", true); }
+    else if (r === "blocked-service") { onToast("This browser blocks push. In Brave, enable 'Google services for push messaging'.", true); }
+    else { onToast("Couldn't turn on notifications — try Chrome.", true); }
+  }
+  function dismiss() { sessionStorage.setItem("notifPromptDismissed", "1"); setShow(false); }
+
+  return (
+    <div className="notifprompt">
+      <span className="np-ic">🔔</span>
+      <span className="np-txt">Turn on notifications so you don&apos;t miss a payment — even when PayTrack is closed.</span>
+      <button className="btn btn-primary np-enable" onClick={enable} disabled={busy}>{busy ? "…" : "Enable"}</button>
+      <button className="np-x" onClick={dismiss} aria-label="Dismiss">✕</button>
+    </div>
+  );
+}
+
 function RemindBanner({ show, all }: { show: boolean; all: Card[] }) {
   const pend = all.filter((p) => ["REQUESTED", "SCHEDULED", "HOLD"].includes(p.status)).length;
   const [cd, setCd] = useState(15 * 60);
