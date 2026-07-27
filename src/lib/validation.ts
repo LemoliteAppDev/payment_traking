@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-export const ACCOUNTS = ["PELISWAN", "LEMOLITE", "SHIVAM", "ZENITH"] as const;
-
 // amount arrives as an integer-paise string (JSON has no BigInt).
 const paise = z
   .string()
@@ -12,7 +10,7 @@ const paise = z
 export const createPaymentSchema = z.object({
   amount: paise,
   payee: z.string().trim().min(1, "payee is required").max(120),
-  payFrom: z.enum(ACCOUNTS),
+  payFrom: z.string().trim().min(1, "pay-from account is required").max(60),
   purpose: z.string().trim().max(500).optional().default(""),
   upi: z.string().trim().max(120).optional().default(""),
   dueDate: z.coerce.date(),
@@ -40,6 +38,10 @@ export const createUserSchema = z.object({
 
 export const setPasswordSchema = z.object({ password: z.string().min(6).max(200) });
 export const setActiveSchema = z.object({ active: z.boolean() });
+
+export const createPayAccountSchema = z.object({
+  name: z.string().trim().min(1, "name is required").max(60),
+});
 
 export const cancelSchema = z.object({
   reason: z.string().trim().max(500).optional().default(""),

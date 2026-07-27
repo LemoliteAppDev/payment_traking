@@ -48,14 +48,19 @@ async function main() {
     users[u.name] = rec.id;
   }
 
+  // Pay-from accounts (the "Pay from" list). Admins can add more in-app.
+  for (const name of ["Peliswan", "Lemolite", "Shivam", "Zenith"]) {
+    await prisma.payAccount.upsert({ where: { name }, update: {}, create: { name } });
+  }
+
   // Demo payments — only when SEED_DEMO=1 (never in real/production seeding).
   // Run `SEED_DEMO=1 npm run db:seed` if you want sample data for a demo.
   if (process.env.SEED_DEMO === "1" && (await prisma.payment.count()) === 0) {
     const demo = [
-      { payee: "Glow Cosmetics Pvt Ltd", amount: 4500000n, purpose: "Bulk SKU restock — skincare", by: "Jignesh", payFrom: "ZENITH" as const, status: "REQUESTED" as const, due: day(-2) },
-      { payee: "Shiprocket", amount: 1250000n, purpose: "Courier wallet top-up", by: "Jagat", payFrom: "LEMOLITE" as const, status: "SCHEDULED" as const, due: day(0), scheduledFor: day(0) },
-      { payee: "AWS", amount: 12000000n, purpose: "Monthly cloud bill", by: "Jignesh", payFrom: "ZENITH" as const, status: "REQUESTED" as const, due: day(3) },
-      { payee: "@makeupbyzoya", amount: 2200000n, purpose: "Influencer collab — reel", by: "Bhadresh", payFrom: "PELISWAN" as const, status: "HOLD" as const, due: day(2) },
+      { payee: "Glow Cosmetics Pvt Ltd", amount: 4500000n, purpose: "Bulk SKU restock — skincare", by: "Jignesh", payFrom: "Zenith", status: "REQUESTED" as const, due: day(-2) },
+      { payee: "Shiprocket", amount: 1250000n, purpose: "Courier wallet top-up", by: "Jagat", payFrom: "Lemolite", status: "SCHEDULED" as const, due: day(0), scheduledFor: day(0) },
+      { payee: "AWS", amount: 12000000n, purpose: "Monthly cloud bill", by: "Jignesh", payFrom: "Zenith", status: "REQUESTED" as const, due: day(3) },
+      { payee: "@makeupbyzoya", amount: 2200000n, purpose: "Influencer collab — reel", by: "Bhadresh", payFrom: "Peliswan", status: "HOLD" as const, due: day(2) },
     ];
     for (const d of demo) {
       const p = await prisma.payment.create({

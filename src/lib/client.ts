@@ -19,6 +19,8 @@ export interface TeamUser {
 }
 export interface Me { me: MeUser | null }
 
+export interface PayAccountLite { id: string; name: string; active: boolean }
+
 export interface Card {
   id: string;
   amount: string; // paise
@@ -128,6 +130,12 @@ export const api = {
     req<{ ok: true }>(`/api/v1/users/${id}/password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) }),
   teamSetActive: (id: string, active: boolean) =>
     req<{ ok: true }>(`/api/v1/users/${id}/active`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ active }) }),
+  // pay-from accounts
+  payAccounts: () => req<{ accounts: PayAccountLite[] }>("/api/v1/pay-accounts"),
+  payAccountCreate: (name: string) =>
+    req<{ account: PayAccountLite }>("/api/v1/pay-accounts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }),
+  payAccountSetActive: (id: string, active: boolean) =>
+    req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ active }) }),
 };
 
 // ── UI helpers ───────────────────────────────────────────────────────

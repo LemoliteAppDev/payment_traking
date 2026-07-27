@@ -15,6 +15,7 @@ import {
   type PaymentLike,
 } from "@/lib/status";
 import type { SessionUser } from "@/lib/session";
+import { isActiveAccount } from "@/lib/pay-accounts";
 import type { Prisma, EventType, AttachmentKind } from "@/generated/prisma";
 
 const paymentInclude = {
@@ -248,7 +249,7 @@ function isUniqueViolation(e: unknown): boolean {
 export interface CreateInput {
   amount: bigint;
   payee: string;
-  payFrom: "PELISWAN" | "LEMOLITE" | "SHIVAM" | "ZENITH";
+  payFrom: string; // name of a PayAccount
   purpose: string;
   upi: string;
   dueDate: Date;
@@ -259,6 +260,9 @@ export async function createPayment(
   actor: SessionUser,
   file?: { originalName: string; storedName: string; mimeType: string; size: number },
 ): Promise<FullPayment> {
+  if (!(await isActiveAccount(input.payFrom))) {
+    throw new ApiError(400, "INVALID_ACCOUNT", "Choose a valid pay-from account.");
+  }
   // Users' requests go to the approver first; admins' requests go to the payer.
   const needsApproval = !actor.isAdmin;
   const created = await prisma.$transaction(async (tx) => {
@@ -318,6 +322,10 @@ export async function editPayment(
   // Editable any time before it's paid.
   if (payment.status === "PAID" || payment.status === "CONFIRMED" || payment.status === "CANCELLED") {
     throw new ApiError(409, "NOT_EDITABLE", "This payment can no longer be edited.");
+  }
+  // Allow the existing account (even if since deactivated) or any active one.
+  if (input.payFrom !== payment.payFrom && !(await isActiveAccount(input.payFrom))) {
+    throw new ApiError(400, "INVALID_ACCOUNT", "Choose a valid pay-from account.");
   }
   await prisma.$transaction(async (tx) => {
     await tx.payment.update({

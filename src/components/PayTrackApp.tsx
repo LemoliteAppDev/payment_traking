@@ -244,8 +244,8 @@ export function PayTrackApp() {
             </div>
           </div>
 
-          {newOpen && <NewSheet onClose={() => setNewOpen(false)} onSubmit={(f) => mCreate.mutate(f)} busy={mCreate.isPending} onError={(m) => showToast(m, true)} />}
-          {editFor && <NewSheet initial={editFor} onClose={() => setEditFor(null)} onSubmit={(f) => mEdit.mutate({ id: editFor.id, form: f })} busy={mEdit.isPending} onError={(m) => showToast(m, true)} />}
+          {newOpen && <NewSheet onClose={() => setNewOpen(false)} onSubmit={(f) => mCreate.mutate(f)} busy={mCreate.isPending} onError={(m) => showToast(m, true)} isAdmin={isAdmin} onToast={showToast} />}
+          {editFor && <NewSheet initial={editFor} onClose={() => setEditFor(null)} onSubmit={(f) => mEdit.mutate({ id: editFor.id, form: f })} busy={mEdit.isPending} onError={(m) => showToast(m, true)} isAdmin={isAdmin} onToast={showToast} />}
           {schedFor && <ScheduleSheet onClose={() => setSchedFor(null)} onSubmit={(date) => mSchedule.mutate({ id: schedFor, date })} busy={mSchedule.isPending} />}
           {paidFor && <PaidSheet onClose={() => setPaidFor(null)} onSubmit={(f) => mPay.mutate({ id: paidFor, form: f })} busy={mPay.isPending} onError={(m) => showToast(m, true)} />}
           {rejectFor && <RejectSheet onClose={() => setRejectFor(null)} onSubmit={(reason) => mReject.mutate({ id: rejectFor, reason })} busy={mReject.isPending} />}
@@ -788,12 +788,76 @@ function Sheet({ title, children, foot, onClose }: { title: string; children: Re
   );
 }
 
-const titleCase = (s: string) => s.charAt(0) + s.slice(1).toLowerCase();
-function NewSheet({ onClose, onSubmit, busy, onError, initial }: { onClose: () => void; onSubmit: (f: FormData) => void; busy: boolean; onError: (m: string) => void; initial?: Detail }) {
+/* "Pay from" picker. Data-driven from the admin-managed account list; admins
+   can add a new account or hide an existing one right here. */
+function PayFromField({ value, onChange, isAdmin, onToast }: { value: string; onChange: (v: string) => void; isAdmin: boolean; onToast: (m: string, err?: boolean) => void }) {
+  const qc = useQueryClient();
+  const accountsQ = useQuery({ queryKey: ["payAccounts"], queryFn: api.payAccounts });
+  const accounts = useMemo(() => accountsQ.data?.accounts ?? [], [accountsQ.data]);
+  const active = useMemo(() => accounts.filter((a) => a.active), [accounts]);
+  // Keep the current value selectable even if it's inactive/unknown (e.g. editing an old entry).
+  const options = value && !active.some((a) => a.name === value) ? [value, ...active.map((a) => a.name)] : active.map((a) => a.name);
+
+  // Default to the first account once the list loads and nothing is chosen yet.
+  useEffect(() => {
+    if (!value && active.length) onChange(active[0].name);
+  }, [value, active, onChange]);
+
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [manage, setManage] = useState(false);
+
+  const mAdd = useMutation({
+    mutationFn: (name: string) => api.payAccountCreate(name),
+    onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["payAccounts"] }); setNewName(""); setAdding(false); onChange(d.account.name); onToast("Account added"); },
+    onError: (e: Error) => onToast(e.message, true),
+  });
+  const mActive = useMutation({
+    mutationFn: ({ id, active: a }: { id: string; active: boolean }) => api.payAccountSetActive(id, a),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["payAccounts"] }),
+    onError: (e: Error) => onToast(e.message, true),
+  });
+
+  return (
+    <div className="fld">
+      <label>Pay from{isAdmin && <button type="button" className="linklike" onClick={() => setManage((m) => !m)}>{manage ? "done" : "manage"}</button>}</label>
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.length === 0 && <option value="">No accounts yet</option>}
+        {options.map((n) => <option key={n} value={n}>{n}</option>)}
+      </select>
+      {isAdmin && (
+        <div className="acctadmin">
+          {!adding ? (
+            <button type="button" className="linklike add" onClick={() => setAdding(true)}>＋ Add account</button>
+          ) : (
+            <div className="acctadd">
+              <input autoFocus placeholder="New account name" value={newName} onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && newName.trim()) mAdd.mutate(newName.trim()); }} />
+              <button type="button" className="btn btn-primary sm" disabled={!newName.trim() || mAdd.isPending} onClick={() => mAdd.mutate(newName.trim())}>Add</button>
+              <button type="button" className="btn btn-ghost sm" onClick={() => { setAdding(false); setNewName(""); }}>Cancel</button>
+            </div>
+          )}
+          {manage && (
+            <div className="acctlist">
+              {accounts.map((a) => (
+                <div key={a.id} className={`acctrow ${a.active ? "" : "off"}`}>
+                  <span>{a.name}{a.active ? "" : " · hidden"}</span>
+                  <button type="button" className="linklike" onClick={() => mActive.mutate({ id: a.id, active: !a.active })}>{a.active ? "Hide" : "Show"}</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NewSheet({ onClose, onSubmit, busy, onError, initial, isAdmin, onToast }: { onClose: () => void; onSubmit: (f: FormData) => void; busy: boolean; onError: (m: string) => void; initial?: Detail; isAdmin: boolean; onToast: (m: string, err?: boolean) => void }) {
   const editing = !!initial;
   const [amt, setAmt] = useState(initial ? (Number(initial.amount) / 100).toLocaleString("en-IN") : "");
   const [payee, setPayee] = useState(initial?.payee ?? "");
-  const [payFrom, setPayFrom] = useState(initial ? titleCase(initial.payFrom) : "Peliswan");
+  const [payFrom, setPayFrom] = useState(initial?.payFrom ?? "");
   const [purpose, setPurpose] = useState(initial?.purpose ?? "");
   const [upi, setUpi] = useState(initial?.upi ?? "");
   const [due, setDue] = useState(initial ? initial.dueDate.slice(0, 10) : isoDay(2));
@@ -805,10 +869,11 @@ function NewSheet({ onClose, onSubmit, busy, onError, initial }: { onClose: () =
 
   function submit() {
     if (!rupees || !payee.trim()) { onError("Please fill in how much and who to pay"); return; }
+    if (!payFrom.trim()) { onError("Please choose a pay-from account"); return; }
     const f = new FormData();
     f.set("amount", String(rupees * 100)); // rupees -> paise
     f.set("payee", payee.trim());
-    f.set("payFrom", payFrom.toUpperCase());
+    f.set("payFrom", payFrom.trim());
     f.set("purpose", purpose.trim());
     f.set("upi", upi.trim());
     f.set("dueDate", due);
@@ -825,7 +890,7 @@ function NewSheet({ onClose, onSubmit, busy, onError, initial }: { onClose: () =
       </div>
       <div className="amtwords">{words}</div>
       <div className="two">
-        <div className="fld"><label>Pay from</label><select value={payFrom} onChange={(e) => setPayFrom(e.target.value)}><option>Peliswan</option><option>Lemolite</option><option>Shivam</option><option>Zenith</option></select></div>
+        <PayFromField value={payFrom} onChange={setPayFrom} isAdmin={isAdmin} onToast={onToast} />
         <div className="fld"><label>Their UPI or bank <span style={{ color: "var(--ink-3)", fontWeight: 500 }}>(optional)</span></label><input placeholder="name@upi" value={upi} onChange={(e) => setUpi(e.target.value)} /></div>
       </div>
       <div className="fld"><label>Pay who?</label><input placeholder="Shop or person name" value={payee} onChange={(e) => setPayee(e.target.value)} /></div>

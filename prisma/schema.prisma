@@ -16,13 +16,6 @@ enum Role {
   USER
 }
 
-enum PayAccount {
-  PELISWAN
-  LEMOLITE
-  SHIVAM
-  ZENITH
-}
-
 enum Status {
   AWAITING_APPROVAL
   RETURNED
@@ -134,7 +127,7 @@ model Payment {
   id            String    @id @default(cuid())
   amount        BigInt // integer paise
   payee         String
-  payFrom       PayAccount
+  payFrom       String     // name of a PayAccount (the source to pay from)
   purpose       String     @db.Text
   upi           String?
   status        Status    @default(REQUESTED)
@@ -197,6 +190,14 @@ model PaymentEvent {
   createdAt    DateTime    @default(now())
 
   @@index([paymentId, createdAt])
+}
+
+// Sources money is paid from (the "Pay from" list). Managed by admins.
+model PayAccount {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
 }
 
 model IdempotencyKey {
