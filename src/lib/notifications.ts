@@ -10,15 +10,17 @@ function whereFor(user: SessionUser): Prisma.PaymentEventWhereInput {
     { payment: { requestedById: user.id } },
   ];
   if (user.isApprover) {
-    // Requests/resubmissions that need approval (user-raised).
+    // Requests/resubmissions/edits that need approval (in the approver's court).
     or.push({ type: "REQUEST", payment: { requestedBy: { role: "USER" } } });
     or.push({ type: "RESUBMIT" });
+    or.push({ type: "EDIT", payment: { status: { in: ["AWAITING_APPROVAL", "RETURNED"] } } });
   }
   if (user.isPayer) {
     // Payments that have reached the payer: approvals, admin-raised requests,
-    // plus nudges and receipt confirmations.
+    // edits made while with the payer, plus nudges and receipt confirmations.
     or.push({ type: "APPROVE" });
     or.push({ type: "REQUEST", payment: { requestedBy: { role: "ADMIN" } } });
+    or.push({ type: "EDIT", payment: { status: { in: ["REQUESTED", "SCHEDULED", "HOLD"] } } });
     or.push({ type: "NUDGE" });
     or.push({ type: "CONFIRM" });
   }

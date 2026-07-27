@@ -30,6 +30,8 @@ export interface Card {
   overdue: boolean;
   dueDate: string;
   scheduledFor: string | null;
+  createdAt: string;
+  editedAt: string | null;
   mine: boolean;
   requestedBy: UserLite;
   hasProof: boolean;
@@ -48,6 +50,7 @@ export interface Detail extends Omit<Card, "mine"> {
   upi: string | null;
   paidAt: string | null;
   confirmedAt: string | null;
+  editedAt: string | null;
   createdAt: string;
   requestedBy: UserLite;
   paidBy: UserLite | null;
@@ -114,6 +117,7 @@ export const api = {
     }),
   resubmit: (id: string) => req<{ payment: Detail }>(`/api/v1/payments/${id}/resubmit`, { method: "POST" }),
   edit: (id: string, form: FormData) => req<{ payment: Detail }>(`/api/v1/payments/${id}`, { method: "PUT", body: form }),
+  remove: (id: string) => req<{ ok: true }>(`/api/v1/payments/${id}`, { method: "DELETE" }),
   notifications: () => req<NotificationsResponse>("/api/v1/notifications"),
   markNotificationsRead: () => req<{ ok: true }>("/api/v1/notifications/read", { method: "POST" }),
   // team management (manager only)
@@ -174,6 +178,10 @@ export function timeAgo(dateISO: string): string {
   const days = Math.floor(hrs / 24);
   return days < 7 ? `${days}d ago` : new Date(dateISO).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
+
+/** "27 Jul 2026, 05:10 pm" — full date+time for the "raised on" stamp. */
+export const fmtStamp = (dateISO: string): string =>
+  new Date(dateISO).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
 export const fmtShort = (dateISO: string): string =>
   new Date(dateISO).toLocaleDateString("en-IN", { day: "numeric", month: "short" });

@@ -2,7 +2,7 @@
 // Stored on local disk under UPLOAD_DIR (outside the web root, never /public),
 // with a randomised filename. The original name is kept for display only.
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { ApiError } from "@/lib/api";
 
@@ -67,4 +67,10 @@ export async function readUpload(storedName: string): Promise<Buffer> {
   } catch {
     throw new ApiError(404, "NOT_FOUND", "File not found.");
   }
+}
+
+/** Delete a stored file (best-effort; ignores a missing file). */
+export async function deleteUpload(storedName: string): Promise<void> {
+  if (!/^[A-Za-z0-9._-]+$/.test(storedName) || storedName.includes("..")) return;
+  await unlink(path.join(uploadDir(), storedName)).catch(() => {});
 }

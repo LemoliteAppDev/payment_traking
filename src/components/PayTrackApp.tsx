@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, isoDay, timeAgo,
+  api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, isoDay, timeAgo,
   type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
@@ -141,6 +141,11 @@ export function PayTrackApp() {
     onSuccess: (d) => { refresh(); setEditFor(null); setSelected(d.payment.id); showToast("Changes saved"); },
     onError: (e: Error) => showToast(e.message, true),
   });
+  const mDelete = useMutation({
+    mutationFn: (id: string) => api.remove(id),
+    onSuccess: () => { setSelected(null); qc.invalidateQueries({ queryKey: ["payments"] }); showToast("Payment deleted"); },
+    onError: (e: Error) => showToast(e.message, true),
+  });
 
   // ── derived list ──
   const filtered = useMemo(() => {
@@ -229,6 +234,7 @@ export function PayTrackApp() {
                   onReject={(id) => setRejectFor(id)}
                   onResubmit={(id) => mResubmit.mutate(id)}
                   onEdit={(p) => setEditFor(p)}
+                  onDelete={(id) => { if (window.confirm("Delete this payment permanently? This can't be undone.")) mDelete.mutate(id); }}
                 />
               </div>
             </div>
@@ -246,13 +252,13 @@ export function PayTrackApp() {
           </div>
         </div>
       </div>
-      <Lightbox img={lightbox} onClose={() => setLightbox(null)} />
+      <Lightbox img={lightbox} onClose={() => setLightbox(null)} onToast={showToast} />
     </ImageViewerCtx.Provider>
   );
 }
 
-/* Full-screen image viewer (WhatsApp-style). Close on ✕ / backdrop / Esc. */
-function Lightbox({ img, onClose }: { img: { src: string; name: string } | null; onClose: () => void }) {
+/* Full-screen image viewer (WhatsApp-style) with Share + Download. */
+function Lightbox({ img, onClose, onToast }: { img: { src: string; name: string } | null; onClose: () => void; onToast: (m: string, err?: boolean) => void }) {
   useEffect(() => {
     if (!img) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -260,12 +266,47 @@ function Lightbox({ img, onClose }: { img: { src: string; name: string } | null;
     return () => document.removeEventListener("keydown", onKey);
   }, [img, onClose]);
   if (!img) return null;
+  const name = img.name || "image.png";
+  const src = img.src;
+
+  function doDownload() {
+    const a = document.createElement("a");
+    a.href = src; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  async function doShare() {
+    try {
+      const res = await fetch(src);
+      const blob = await res.blob();
+      const file = new File([blob], name, { type: blob.type || "image/png" });
+      const nav = navigator as Navigator & { canShare?: (d: unknown) => boolean };
+      if (nav.canShare && nav.canShare({ files: [file] }) && navigator.share) {
+        await navigator.share({ files: [file], title: name });
+      } else {
+        doDownload();
+        onToast("Downloaded — share it from your files/gallery");
+      }
+    } catch (e) {
+      if ((e as Error)?.name !== "AbortError") { doDownload(); }
+    }
+  }
+
   return (
     <div className="lightbox" onClick={onClose}>
-      <button className="lbclose" onClick={onClose} aria-label="Close">✕</button>
+      <div className="lbbar" onClick={(e) => e.stopPropagation()}>
+        <button className="lbbtn" onClick={doShare} title="Share">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg>
+          Share
+        </button>
+        <button className="lbbtn" onClick={doDownload} title="Download">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>
+          Download
+        </button>
+        <button className="lbbtn lbx" onClick={onClose} title="Close">✕</button>
+      </div>
       { /* eslint-disable-next-line @next/next/no-img-element */ }
-      <img src={img.src} alt={img.name} onClick={(e) => e.stopPropagation()} />
-      <div className="lbname" onClick={(e) => e.stopPropagation()}>{img.name}</div>
+      <img src={src} alt={name} onClick={(e) => e.stopPropagation()} />
+      <div className="lbname" onClick={(e) => e.stopPropagation()}>{name}</div>
     </div>
   );
 }
@@ -541,7 +582,7 @@ function PaymentCard({ p, selected, onClick }: { p: Card; selected: boolean; onC
         <div className="row1"><span className="payee">{p.payee}</span><span className="amt grotesk">{fmtPaise(p.amount)}</span></div>
         <div className="row2"><StatusPill eff={p.effective} />{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}</div>
         <div className="meta">{p.purpose}</div>
-        <div className="submeta">from <b>{p.payFrom}</b> · {p.mine ? "you asked" : "by " + p.requestedBy.name}</div>
+        <div className="submeta">from <b>{p.payFrom}</b> · {p.mine ? "you asked" : "by " + p.requestedBy.name} · {timeAgo(p.createdAt)}</div>
         {needsMe && <div className="flagline">✓ Paid — tap to say you got it</div>}
       </div>
     </div>
@@ -553,7 +594,7 @@ interface DetailActions {
   onSchedule: (id: string) => void; onPay: (id: string) => void; onHold: (id: string) => void;
   onConfirm: (id: string) => void; onNudge: (id: string) => void;
   onApprove: (id: string) => void; onReject: (id: string) => void; onResubmit: (id: string) => void;
-  onEdit: (p: Detail) => void;
+  onEdit: (p: Detail) => void; onDelete: (id: string) => void;
 }
 function PaymentDetail(props: { detail: Detail | null; me: MeUser | null; loading: boolean; onBack: () => void } & DetailActions) {
   const { detail: p, me } = props;
@@ -583,6 +624,7 @@ function PaymentDetail(props: { detail: Detail | null; me: MeUser | null; loadin
           <div style={{ marginTop: 7, display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
             <StatusPill eff={eff} />{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}
           </div>
+          <div className="tstamp">Raised {fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${timeAgo(p.editedAt)}` : ""}</div>
         </div>
         <div className="amt grotesk">{fmtPaise(p.amount)}<small>from {p.payFrom}</small></div>
       </div>
@@ -655,15 +697,11 @@ function Actions({ p, me, act }: { p: Detail; me: MeUser | null; act: DetailActi
       </>);
     } else if (mine) {
       hint = "Waiting for Jagat to approve. You can still edit it.";
-      btns = <button className="btn btn-sched" onClick={() => act.onEdit(p)}>✏️ Edit</button>;
     } else { hint = "Waiting for Jagat to approve."; btns = disabled("Awaiting approval"); }
   } else if (p.status === "RETURNED") {
     if (mine) {
       hint = "Jagat returned this for changes. Edit it, then resubmit.";
-      btns = (<>
-        <button className="btn btn-sched" onClick={() => act.onEdit(p)}>✏️ Edit</button>
-        <button className="btn btn-primary" onClick={() => act.onResubmit(p.id)}>↥ Resubmit</button>
-      </>);
+      btns = <button className="btn btn-primary" onClick={() => act.onResubmit(p.id)}>↥ Resubmit</button>;
     } else { hint = `Returned to ${p.requestedBy.name} for changes.`; btns = disabled("Returned"); }
   } else if (isPayer) {
     if (eff === "REQUESTED" || (eff === "OVERDUE" && p.status === "REQUESTED")) {
@@ -694,7 +732,18 @@ function Actions({ p, me, act }: { p: Detail; me: MeUser | null; act: DetailActi
       btns = <button className="btn btn-sched" onClick={() => act.onNudge(p.id)}>🔔 Send a reminder</button>;
     }
   }
-  return <div className="actions"><span className="hint"><IcInfo />{hint}</span>{btns}</div>;
+  // Edit (raiser) and Delete (raiser or admin) are available until it's paid.
+  const notFinal = p.status !== "PAID" && p.status !== "CONFIRMED" && p.status !== "CANCELLED";
+  const canEdit = mine && notFinal;
+  const canDelete = (mine || !!me?.isAdmin) && p.status !== "PAID" && p.status !== "CONFIRMED";
+  return (
+    <div className="actions">
+      <span className="hint"><IcInfo />{hint}</span>
+      {canEdit && <button className="btn btn-ghost" onClick={() => act.onEdit(p)}>✏️ Edit</button>}
+      {canDelete && <button className="btn btn-ghost del" onClick={() => act.onDelete(p.id)}>🗑 Delete</button>}
+      {btns}
+    </div>
+  );
 }
 
 /* ── sheets ────────────────────────────────────────────────────────── */

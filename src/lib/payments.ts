@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { ApiError } from "@/lib/api";
 import { sendPushToUser, sendPushToPayers, sendPushToApprovers } from "@/lib/push";
 import { formatINR } from "@/lib/money";
+import { deleteUpload } from "@/lib/upload";
 import { isPastDateTz } from "@/lib/time";
 import {
   transition,
@@ -55,6 +56,7 @@ export function serializePayment(p: FullPayment) {
     overdue,
     dueDate: p.dueDate,
     scheduledFor: p.scheduledFor,
+    editedAt: p.editedAt,
     approvedAt: p.approvedAt,
     paidAt: p.paidAt,
     confirmedAt: p.confirmedAt,
@@ -313,7 +315,8 @@ export async function editPayment(
   const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
   if (!payment) throw new ApiError(404, "NOT_FOUND", "Payment not found.");
   if (payment.requestedById !== actor.id) throw new ApiError(403, "FORBIDDEN", "Only the person who raised this can edit it.");
-  if (payment.status !== "AWAITING_APPROVAL" && payment.status !== "RETURNED") {
+  // Editable any time before it's paid.
+  if (payment.status === "PAID" || payment.status === "CONFIRMED" || payment.status === "CANCELLED") {
     throw new ApiError(409, "NOT_EDITABLE", "This payment can no longer be edited.");
   }
   await prisma.$transaction(async (tx) => {
@@ -322,6 +325,7 @@ export async function editPayment(
       data: {
         amount: input.amount, payee: input.payee, payFrom: input.payFrom,
         purpose: input.purpose, upi: input.upi || null, dueDate: input.dueDate,
+        editedAt: new Date(),
       },
     });
     let attachmentId: string | undefined;
@@ -336,10 +340,44 @@ export async function editPayment(
       attachmentId = att.id;
     }
     await tx.paymentEvent.create({
-      data: { paymentId, actorId: actor.id, type: "EDIT", message: `${actor.name} edited this request.`, attachmentId },
+      data: { paymentId, actorId: actor.id, type: "EDIT", message: `${actor.name} edited this payment.`, attachmentId },
     });
   });
-  return loadPayment(paymentId);
+
+  const fresh = await loadPayment(paymentId);
+  // Notify whoever's court it's in: the approver while awaiting/returned, else the payer.
+  const body = `${actor.name} edited ${formatINR(fresh.amount)} to ${fresh.payee}.`;
+  const notify =
+    fresh.status === "AWAITING_APPROVAL" || fresh.status === "RETURNED"
+      ? sendPushToApprovers({ title: "Payment edited", body, url: "/" })
+      : sendPushToPayers({ title: "Payment edited", body, url: "/" });
+  await notify.catch((e) => console.error("[notify] failed", e));
+  return fresh;
+}
+
+/** Hard-delete a payment (+ its files/events) while it is not yet paid.
+ *  Allowed for the raiser or any admin. */
+export async function deletePayment(paymentId: string, actor: SessionUser): Promise<void> {
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    include: { attachments: true },
+  });
+  if (!payment) throw new ApiError(404, "NOT_FOUND", "Payment not found.");
+  if (payment.requestedById !== actor.id && !actor.isAdmin) {
+    throw new ApiError(403, "FORBIDDEN", "You can't delete this payment.");
+  }
+  if (payment.status === "PAID" || payment.status === "CONFIRMED") {
+    throw new ApiError(409, "NOT_DELETABLE", "A paid payment can't be deleted.");
+  }
+  // Remove the files from disk first (best-effort), then the DB rows (cascade).
+  for (const a of payment.attachments) {
+    await deleteUpload(a.storedName).catch(() => {});
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.paymentEvent.deleteMany({ where: { paymentId } });
+    await tx.attachment.deleteMany({ where: { paymentId } });
+    await tx.payment.delete({ where: { id: paymentId } });
+  });
 }
 
 // ── Nudge (no status change) ─────────────────────────────────────────
@@ -398,6 +436,8 @@ export async function listPayments(actor: SessionUser, filter: string, q: string
     overdue: overdueFor(p),
     dueDate: p.dueDate,
     scheduledFor: p.scheduledFor,
+    createdAt: p.createdAt,
+    editedAt: p.editedAt,
     mine: p.requestedById === actor.id,
     requestedBy: { id: p.requestedBy.id, name: p.requestedBy.name, role: p.requestedBy.role },
     hasProof: p.attachments.some((a) => a.kind === "PROOF"),

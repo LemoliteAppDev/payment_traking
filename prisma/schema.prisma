@@ -140,6 +140,7 @@ model Payment {
   status        Status    @default(REQUESTED)
   dueDate       DateTime
   scheduledFor  DateTime?
+  editedAt      DateTime?
   approvedAt    DateTime?
   paidAt        DateTime?
   confirmedAt   DateTime?

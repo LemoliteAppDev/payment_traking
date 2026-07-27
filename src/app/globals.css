@@ -198,12 +198,20 @@ a{color:inherit}
 .proofimg:hover{filter:brightness(.97)}
 .proofimg img{width:100%;height:100%;object-fit:cover;display:block}
 
+/* detail + card timestamps */
+.tstamp{margin-top:6px;font-size:11px;color:var(--ink-3)}
+.btn.del{color:var(--over)}
+.btn.del:hover{background:var(--over-soft);border-color:#F3C6C6}
+
 /* image lightbox (WhatsApp-style) */
-.lightbox{position:fixed;inset:0;z-index:300;background:rgba(8,14,22,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;animation:pop .15s ease}
-.lightbox img{max-width:min(96vw,1100px);max-height:86vh;object-fit:contain;border-radius:10px;box-shadow:var(--shadow-lg)}
+.lightbox{position:fixed;inset:0;z-index:300;background:rgba(8,14,22,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:64px 32px 32px;animation:pop .15s ease}
+.lightbox img{max-width:min(96vw,1100px);max-height:80vh;object-fit:contain;border-radius:10px;box-shadow:var(--shadow-lg)}
 .lbname{margin-top:14px;color:#e7edf3;font-size:13px;font-weight:500;max-width:90vw;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lbclose{position:fixed;top:18px;right:20px;width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.12);color:#fff;font-size:18px;display:grid;place-items:center;transition:.15s}
-.lbclose:hover{background:rgba(255,255,255,.22)}
+.lbbar{position:fixed;top:16px;right:18px;display:flex;gap:8px}
+.lbbtn{display:inline-flex;align-items:center;gap:7px;height:40px;padding:0 15px;border-radius:999px;background:rgba(255,255,255,.14);color:#fff;font-size:13px;font-weight:600;transition:.15s}
+.lbbtn:hover{background:rgba(255,255,255,.26)}
+.lbbtn svg{width:17px;height:17px}
+.lbbtn.lbx{width:40px;padding:0;justify-content:center;font-size:16px}
 .actions{padding:14px 18px calc(16px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface);display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:none}
 .actions .hint{font-size:12.5px;color:var(--ink-2);margin-right:auto;display:flex;align-items:flex-start;gap:6px;line-height:1.4}
 .actions .hint svg{width:16px;height:16px;color:var(--ink-3);flex:none;margin-top:1px}

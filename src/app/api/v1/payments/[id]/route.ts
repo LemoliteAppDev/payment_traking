@@ -3,7 +3,7 @@ import { json, route, ApiError } from "@/lib/api";
 import { requireUser } from "@/lib/session";
 import { createPaymentSchema } from "@/lib/validation";
 import { saveUpload } from "@/lib/upload";
-import { loadPayment, editPayment, serializePayment } from "@/lib/payments";
+import { loadPayment, editPayment, deletePayment, serializePayment } from "@/lib/payments";
 
 export const GET = route(async (_req: Request, ctx: { params: Promise<{ id: string }> }) => {
   const user = await requireUser();
@@ -33,4 +33,12 @@ export const PUT = route(async (req: NextRequest, ctx: { params: Promise<{ id: s
   const file = fileEntry instanceof File && fileEntry.size > 0 ? await saveUpload(fileEntry) : undefined;
   const payment = await editPayment(id, user, parsed, file);
   return json({ payment: serializePayment(payment) });
+});
+
+// Delete a payment (raiser or admin, until it's paid).
+export const DELETE = route(async (_req: Request, ctx: { params: Promise<{ id: string }> }) => {
+  const user = await requireUser();
+  const { id } = await ctx.params;
+  await deletePayment(id, user);
+  return json({ ok: true });
 });
