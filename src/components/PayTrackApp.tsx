@@ -199,7 +199,7 @@ export function PayTrackApp() {
     <ImageViewerCtx.Provider value={(src, name) => setLightbox({ src, name })}>
       <div className="frame">
         <div className="screen">
-          <TopBar me={me} onSignOut={() => signOutAction()} onAdd={() => setNewOpen(true)} onToast={showToast} onOpenPayment={(id) => setSelected(id)} onTeam={isManager ? () => setTeamOpen(true) : undefined} />
+          <TopBar me={me} onSignOut={() => signOutAction()} onAdd={() => setNewOpen(true)} onToast={showToast} onOpenPayment={(id) => setSelected(id)} onTeam={(isManager || isAdmin) ? () => setTeamOpen(true) : undefined} />
           {me && <NotifyPrompt onToast={showToast} />}
           <RemindBanner show={isPayer} all={all} />
           <StatStrip all={all} isPayer={isPayer} isApprover={isApprover} isAdmin={isAdmin} />
@@ -249,7 +249,7 @@ export function PayTrackApp() {
           {schedFor && <ScheduleSheet onClose={() => setSchedFor(null)} onSubmit={(date) => mSchedule.mutate({ id: schedFor, date })} busy={mSchedule.isPending} />}
           {paidFor && <PaidSheet onClose={() => setPaidFor(null)} onSubmit={(f) => mPay.mutate({ id: paidFor, form: f })} busy={mPay.isPending} onError={(m) => showToast(m, true)} />}
           {rejectFor && <RejectSheet onClose={() => setRejectFor(null)} onSubmit={(reason) => mReject.mutate({ id: rejectFor, reason })} busy={mReject.isPending} />}
-          {teamOpen && <TeamSheet onClose={() => setTeamOpen(false)} onToast={showToast} />}
+          {teamOpen && <TeamSheet onClose={() => setTeamOpen(false)} onToast={showToast} isManager={isManager} isAdmin={isAdmin} />}
 
           <div className={`toast ${toast ? "on" : ""} ${toast?.err ? "err" : ""}`}>
             {!toast?.err && <IcCheck />}<span>{toast?.msg}</span>
@@ -965,10 +965,46 @@ function RejectSheet({ onClose, onSubmit, busy }: { onClose: () => void; onSubmi
   );
 }
 
-/* Account management (manager only). */
-function TeamSheet({ onClose, onToast }: { onClose: () => void; onToast: (m: string, err?: boolean) => void }) {
+/* Pay-from accounts manager (any admin). Add a new source or hide/show one. */
+function AccountsManager({ onToast }: { onToast: (m: string, err?: boolean) => void }) {
   const qc = useQueryClient();
-  const usersQ = useQuery({ queryKey: ["team"], queryFn: api.teamList });
+  const q = useQuery({ queryKey: ["payAccounts"], queryFn: api.payAccounts });
+  const accounts = q.data?.accounts ?? [];
+  const [name, setName] = useState("");
+  const mAdd = useMutation({
+    mutationFn: (n: string) => api.payAccountCreate(n),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["payAccounts"] }); setName(""); onToast("Account added"); },
+    onError: (e: Error) => onToast(e.message, true),
+  });
+  const mActive = useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) => api.payAccountSetActive(id, active),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["payAccounts"] }),
+    onError: (e: Error) => onToast(e.message, true),
+  });
+  return (
+    <div className="acctmgr">
+      <div className="acctadd">
+        <input placeholder="New account name" value={name} onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) mAdd.mutate(name.trim()); }} />
+        <button className="btn btn-primary sm" disabled={!name.trim() || mAdd.isPending} onClick={() => mAdd.mutate(name.trim())}>Add</button>
+      </div>
+      <div className="acctlist">
+        {accounts.map((a) => (
+          <div key={a.id} className={`acctrow ${a.active ? "" : "off"}`}>
+            <span>{a.name}{a.active ? "" : " · hidden"}</span>
+            <button className="linklike" onClick={() => mActive.mutate({ id: a.id, active: !a.active })}>{a.active ? "Hide" : "Show"}</button>
+          </div>
+        ))}
+        {accounts.length === 0 && <div className="acctrow"><span style={{ color: "var(--ink-3)" }}>No accounts yet</span></div>}
+      </div>
+    </div>
+  );
+}
+
+/* Team + pay-from accounts. Users: managers only. Accounts: any admin. */
+function TeamSheet({ onClose, onToast, isManager, isAdmin }: { onClose: () => void; onToast: (m: string, err?: boolean) => void; isManager: boolean; isAdmin: boolean }) {
+  const qc = useQueryClient();
+  const usersQ = useQuery({ queryKey: ["team"], queryFn: api.teamList, enabled: isManager });
   const users = usersQ.data?.users ?? [];
   const [showNew, setShowNew] = useState(false);
   const [name, setName] = useState(""); const [loginId, setLoginId] = useState(""); const [pw, setPw] = useState(""); const [role, setRole] = useState<Role>("USER");
@@ -1003,20 +1039,31 @@ function TeamSheet({ onClose, onToast }: { onClose: () => void; onToast: (m: str
         </>
       ) : (
         <>
-          <button className="btn btn-primary" onClick={() => setShowNew(true)}><IcPlus />Add user</button>
-          <div className="teamlist">
-            {users.map((u) => (
-              <div key={u.id} className={`teamrow ${u.active ? "" : "off"}`}>
-                <div className="tav" style={{ background: colorFor(u.name) }}>{initials(u.name)}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="tname">{u.name}{!u.active && <span className="tinactive">inactive</span>}</div>
-                  <div className="temail">{u.email} · {u.role === "ADMIN" ? "Admin" : "User"}{u.isPayer ? " · payer" : ""}{u.isApprover ? " · approver" : ""}{u.isManager ? " · manager" : ""}</div>
-                </div>
-                <button className="tbtn" onClick={() => resetPw(u)} title="Reset password">🔑</button>
-                <button className="tbtn" onClick={() => mActive.mutate({ id: u.id, active: !u.active })} title={u.active ? "Deactivate" : "Reactivate"}>{u.active ? "🚫" : "↺"}</button>
+          {isManager && (
+            <>
+              <div className="sechead">Team members</div>
+              <button className="btn btn-primary" onClick={() => setShowNew(true)}><IcPlus />Add user</button>
+              <div className="teamlist">
+                {users.map((u) => (
+                  <div key={u.id} className={`teamrow ${u.active ? "" : "off"}`}>
+                    <div className="tav" style={{ background: colorFor(u.name) }}>{initials(u.name)}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="tname">{u.name}{!u.active && <span className="tinactive">inactive</span>}</div>
+                      <div className="temail">{u.email} · {u.role === "ADMIN" ? "Admin" : "User"}{u.isPayer ? " · payer" : ""}{u.isApprover ? " · approver" : ""}{u.isManager ? " · manager" : ""}</div>
+                    </div>
+                    <button className="tbtn" onClick={() => resetPw(u)} title="Reset password">🔑</button>
+                    <button className="tbtn" onClick={() => mActive.mutate({ id: u.id, active: !u.active })} title={u.active ? "Deactivate" : "Reactivate"}>{u.active ? "🚫" : "↺"}</button>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </>
+          )}
+          {isAdmin && (
+            <>
+              <div className="sechead" style={{ marginTop: isManager ? 20 : 0 }}>Pay-from accounts</div>
+              <AccountsManager onToast={onToast} />
+            </>
+          )}
         </>
       )}
     </Sheet>

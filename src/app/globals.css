@@ -255,6 +255,8 @@ a{color:inherit}
 .acctrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 11px;font-size:13.5px;border-bottom:1px solid var(--line-2)}
 .acctrow:last-child{border-bottom:none}
 .acctrow.off{opacity:.55}
+.sechead{font-size:12px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);margin-bottom:9px}
+.acctmgr .acctadd{margin-bottom:10px}
 .qdrow{display:flex;gap:8px;margin-bottom:10px}
 .qd{flex:1;font-size:13px;font-weight:600;padding:11px 6px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);transition:.15s}
 .qd:hover{border-color:var(--brand)}
