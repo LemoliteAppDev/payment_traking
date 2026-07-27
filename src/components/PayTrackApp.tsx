@@ -244,8 +244,8 @@ export function PayTrackApp() {
             </div>
           </div>
 
-          {newOpen && <NewSheet onClose={() => setNewOpen(false)} onSubmit={(f) => mCreate.mutate(f)} busy={mCreate.isPending} onError={(m) => showToast(m, true)} isAdmin={isAdmin} onToast={showToast} />}
-          {editFor && <NewSheet initial={editFor} onClose={() => setEditFor(null)} onSubmit={(f) => mEdit.mutate({ id: editFor.id, form: f })} busy={mEdit.isPending} onError={(m) => showToast(m, true)} isAdmin={isAdmin} onToast={showToast} />}
+          {newOpen && <NewSheet onClose={() => setNewOpen(false)} onSubmit={(f) => mCreate.mutate(f)} busy={mCreate.isPending} onError={(m) => showToast(m, true)} />}
+          {editFor && <NewSheet initial={editFor} onClose={() => setEditFor(null)} onSubmit={(f) => mEdit.mutate({ id: editFor.id, form: f })} busy={mEdit.isPending} onError={(m) => showToast(m, true)} />}
           {schedFor && <ScheduleSheet onClose={() => setSchedFor(null)} onSubmit={(date) => mSchedule.mutate({ id: schedFor, date })} busy={mSchedule.isPending} />}
           {paidFor && <PaidSheet onClose={() => setPaidFor(null)} onSubmit={(f) => mPay.mutate({ id: paidFor, form: f })} busy={mPay.isPending} onError={(m) => showToast(m, true)} />}
           {rejectFor && <RejectSheet onClose={() => setRejectFor(null)} onSubmit={(reason) => mReject.mutate({ id: rejectFor, reason })} busy={mReject.isPending} />}
@@ -788,13 +788,11 @@ function Sheet({ title, children, foot, onClose }: { title: string; children: Re
   );
 }
 
-/* "Pay from" picker. Data-driven from the admin-managed account list; admins
-   can add a new account or hide an existing one right here. */
-function PayFromField({ value, onChange, isAdmin, onToast }: { value: string; onChange: (v: string) => void; isAdmin: boolean; onToast: (m: string, err?: boolean) => void }) {
-  const qc = useQueryClient();
+/* "Pay from" picker — a plain dropdown of the active accounts. Admins add /
+   hide accounts in the Team panel, not here. */
+function PayFromField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const accountsQ = useQuery({ queryKey: ["payAccounts"], queryFn: api.payAccounts });
-  const accounts = useMemo(() => accountsQ.data?.accounts ?? [], [accountsQ.data]);
-  const active = useMemo(() => accounts.filter((a) => a.active), [accounts]);
+  const active = useMemo(() => (accountsQ.data?.accounts ?? []).filter((a) => a.active), [accountsQ.data]);
   // Keep the current value selectable even if it's inactive/unknown (e.g. editing an old entry).
   const options = value && !active.some((a) => a.name === value) ? [value, ...active.map((a) => a.name)] : active.map((a) => a.name);
 
@@ -803,57 +801,18 @@ function PayFromField({ value, onChange, isAdmin, onToast }: { value: string; on
     if (!value && active.length) onChange(active[0].name);
   }, [value, active, onChange]);
 
-  const [adding, setAdding] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [manage, setManage] = useState(false);
-
-  const mAdd = useMutation({
-    mutationFn: (name: string) => api.payAccountCreate(name),
-    onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["payAccounts"] }); setNewName(""); setAdding(false); onChange(d.account.name); onToast("Account added"); },
-    onError: (e: Error) => onToast(e.message, true),
-  });
-  const mActive = useMutation({
-    mutationFn: ({ id, active: a }: { id: string; active: boolean }) => api.payAccountSetActive(id, a),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["payAccounts"] }),
-    onError: (e: Error) => onToast(e.message, true),
-  });
-
   return (
     <div className="fld">
-      <label>Pay from{isAdmin && <button type="button" className="linklike" onClick={() => setManage((m) => !m)}>{manage ? "done" : "manage"}</button>}</label>
+      <label>Pay from</label>
       <select value={value} onChange={(e) => onChange(e.target.value)}>
         {options.length === 0 && <option value="">No accounts yet</option>}
         {options.map((n) => <option key={n} value={n}>{n}</option>)}
       </select>
-      {isAdmin && (
-        <div className="acctadmin">
-          {!adding ? (
-            <button type="button" className="linklike add" onClick={() => setAdding(true)}>＋ Add account</button>
-          ) : (
-            <div className="acctadd">
-              <input autoFocus placeholder="New account name" value={newName} onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && newName.trim()) mAdd.mutate(newName.trim()); }} />
-              <button type="button" className="btn btn-primary sm" disabled={!newName.trim() || mAdd.isPending} onClick={() => mAdd.mutate(newName.trim())}>Add</button>
-              <button type="button" className="btn btn-ghost sm" onClick={() => { setAdding(false); setNewName(""); }}>Cancel</button>
-            </div>
-          )}
-          {manage && (
-            <div className="acctlist">
-              {accounts.map((a) => (
-                <div key={a.id} className={`acctrow ${a.active ? "" : "off"}`}>
-                  <span>{a.name}{a.active ? "" : " · hidden"}</span>
-                  <button type="button" className="linklike" onClick={() => mActive.mutate({ id: a.id, active: !a.active })}>{a.active ? "Hide" : "Show"}</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
-function NewSheet({ onClose, onSubmit, busy, onError, initial, isAdmin, onToast }: { onClose: () => void; onSubmit: (f: FormData) => void; busy: boolean; onError: (m: string) => void; initial?: Detail; isAdmin: boolean; onToast: (m: string, err?: boolean) => void }) {
+function NewSheet({ onClose, onSubmit, busy, onError, initial }: { onClose: () => void; onSubmit: (f: FormData) => void; busy: boolean; onError: (m: string) => void; initial?: Detail }) {
   const editing = !!initial;
   const [amt, setAmt] = useState(initial ? (Number(initial.amount) / 100).toLocaleString("en-IN") : "");
   const [payee, setPayee] = useState(initial?.payee ?? "");
@@ -890,7 +849,7 @@ function NewSheet({ onClose, onSubmit, busy, onError, initial, isAdmin, onToast 
       </div>
       <div className="amtwords">{words}</div>
       <div className="two">
-        <PayFromField value={payFrom} onChange={setPayFrom} isAdmin={isAdmin} onToast={onToast} />
+        <PayFromField value={payFrom} onChange={setPayFrom} />
         <div className="fld"><label>Their UPI or bank <span style={{ color: "var(--ink-3)", fontWeight: 500 }}>(optional)</span></label><input placeholder="name@upi" value={upi} onChange={(e) => setUpi(e.target.value)} /></div>
       </div>
       <div className="fld"><label>Pay who?</label><input placeholder="Shop or person name" value={payee} onChange={(e) => setPayee(e.target.value)} /></div>
@@ -1007,6 +966,7 @@ function TeamSheet({ onClose, onToast, isManager, isAdmin }: { onClose: () => vo
   const usersQ = useQuery({ queryKey: ["team"], queryFn: api.teamList, enabled: isManager });
   const users = usersQ.data?.users ?? [];
   const [showNew, setShowNew] = useState(false);
+  const [acctOpen, setAcctOpen] = useState(true);
   const [name, setName] = useState(""); const [loginId, setLoginId] = useState(""); const [pw, setPw] = useState(""); const [role, setRole] = useState<Role>("USER");
 
   const mCreate = useMutation({
@@ -1059,10 +1019,13 @@ function TeamSheet({ onClose, onToast, isManager, isAdmin }: { onClose: () => vo
             </>
           )}
           {isAdmin && (
-            <>
-              <div className="sechead" style={{ marginTop: isManager ? 20 : 0 }}>Pay-from accounts</div>
-              <AccountsManager onToast={onToast} />
-            </>
+            <div className="acctsec" style={{ marginTop: isManager ? 18 : 0 }}>
+              <button type="button" className="sechead toggle" onClick={() => setAcctOpen((o) => !o)}>
+                <span>Pay-from accounts</span>
+                <span className={`chev ${acctOpen ? "open" : ""}`}>▾</span>
+              </button>
+              {acctOpen && <AccountsManager onToast={onToast} />}
+            </div>
           )}
         </>
       )}
