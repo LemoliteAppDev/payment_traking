@@ -200,6 +200,7 @@ a{color:inherit}
 
 /* detail + card timestamps */
 .tstamp{margin-top:6px;font-size:11px;color:var(--ink-3)}
+.cstamp{margin-top:4px;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 .btn.del{color:var(--over)}
 .btn.del:hover{background:var(--over-soft);border-color:#F3C6C6}
 

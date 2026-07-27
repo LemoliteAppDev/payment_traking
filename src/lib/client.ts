@@ -179,9 +179,12 @@ export function timeAgo(dateISO: string): string {
   return days < 7 ? `${days}d ago` : new Date(dateISO).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
-/** "27 Jul 2026, 05:10 pm" — full date+time for the "raised on" stamp. */
+/** "27 Jul 2026, 05:10 PM" — full date + 12-hour time (India) for the timestamp. */
 export const fmtStamp = (dateISO: string): string =>
-  new Date(dateISO).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  new Date(dateISO)
+    .toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })
+    .replace(/\bam\b/i, "AM")
+    .replace(/\bpm\b/i, "PM");
 
 export const fmtShort = (dateISO: string): string =>
   new Date(dateISO).toLocaleDateString("en-IN", { day: "numeric", month: "short" });

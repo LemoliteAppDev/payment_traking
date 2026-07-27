@@ -150,7 +150,6 @@ export function PayTrackApp() {
   // ── derived list ──
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const rank: Record<Effective, number> = { RETURNED: 0, AWAITING_APPROVAL: 1, OVERDUE: 2, REQUESTED: 3, SCHEDULED: 4, HOLD: 5, PAID: 6, CONFIRMED: 7, CANCELLED: 8 };
     const isWaiting = (e: Effective) => e === "REQUESTED" || e === "AWAITING_APPROVAL" || e === "RETURNED" || e === "OVERDUE";
     return all
       .filter((p) => {
@@ -164,7 +163,7 @@ export function PayTrackApp() {
         if (filter === "requested") return isWaiting(p.effective);
         return true;
       })
-      .sort((a, b) => (rank[a.effective] - rank[b.effective]) || (+new Date(a.dueDate) - +new Date(b.dueDate)));
+      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }, [all, filter, search]);
 
   const counts = useMemo(() => ({
@@ -582,7 +581,8 @@ function PaymentCard({ p, selected, onClick }: { p: Card; selected: boolean; onC
         <div className="row1"><span className="payee">{p.payee}</span><span className="amt grotesk">{fmtPaise(p.amount)}</span></div>
         <div className="row2"><StatusPill eff={p.effective} />{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}</div>
         <div className="meta">{p.purpose}</div>
-        <div className="submeta">from <b>{p.payFrom}</b> · {p.mine ? "you asked" : "by " + p.requestedBy.name} · {timeAgo(p.createdAt)}</div>
+        <div className="submeta">from <b>{p.payFrom}</b> · {p.mine ? "you asked" : "by " + p.requestedBy.name}</div>
+        <div className="cstamp">🕒 {fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${fmtStamp(p.editedAt)}` : ""}</div>
         {needsMe && <div className="flagline">✓ Paid — tap to say you got it</div>}
       </div>
     </div>
@@ -624,7 +624,7 @@ function PaymentDetail(props: { detail: Detail | null; me: MeUser | null; loadin
           <div style={{ marginTop: 7, display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
             <StatusPill eff={eff} />{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}
           </div>
-          <div className="tstamp">Raised {fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${timeAgo(p.editedAt)}` : ""}</div>
+          <div className="tstamp">🕒 Raised {fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${fmtStamp(p.editedAt)}` : ""}</div>
         </div>
         <div className="amt grotesk">{fmtPaise(p.amount)}<small>from {p.payFrom}</small></div>
       </div>
@@ -735,7 +735,8 @@ function Actions({ p, me, act }: { p: Detail; me: MeUser | null; act: DetailActi
   // Edit (raiser) and Delete (raiser or admin) are available until it's paid.
   const notFinal = p.status !== "PAID" && p.status !== "CONFIRMED" && p.status !== "CANCELLED";
   const canEdit = mine && notFinal;
-  const canDelete = (mine || !!me?.isAdmin) && p.status !== "PAID" && p.status !== "CONFIRMED";
+  // Admin can delete any entry; the raiser can delete their own until it's paid.
+  const canDelete = !!me?.isAdmin || (mine && p.status !== "PAID" && p.status !== "CONFIRMED");
   return (
     <div className="actions">
       <span className="hint"><IcInfo />{hint}</span>

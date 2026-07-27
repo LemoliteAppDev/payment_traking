@@ -366,7 +366,8 @@ export async function deletePayment(paymentId: string, actor: SessionUser): Prom
   if (payment.requestedById !== actor.id && !actor.isAdmin) {
     throw new ApiError(403, "FORBIDDEN", "You can't delete this payment.");
   }
-  if (payment.status === "PAID" || payment.status === "CONFIRMED") {
+  // Raisers can only delete until it's paid; admins may delete any entry.
+  if ((payment.status === "PAID" || payment.status === "CONFIRMED") && !actor.isAdmin) {
     throw new ApiError(409, "NOT_DELETABLE", "A paid payment can't be deleted.");
   }
   // Remove the files from disk first (best-effort), then the DB rows (cascade).
@@ -395,7 +396,6 @@ export async function nudgePayment(paymentId: string, actor: SessionUser): Promi
 }
 
 // ── List with server-side filter + search ────────────────────────────
-const RANK: Record<string, number> = { RETURNED: 0, AWAITING_APPROVAL: 1, OVERDUE: 2, REQUESTED: 3, SCHEDULED: 4, HOLD: 5, PAID: 6, CONFIRMED: 7, CANCELLED: 8 };
 
 export async function listPayments(actor: SessionUser, filter: string, q: string) {
   // Visibility: admins see everything; users see only what they raised.
@@ -419,11 +419,8 @@ export async function listPayments(actor: SessionUser, filter: string, q: string
       }
       return true;
     })
-    .sort((a, b) => {
-      const ra = RANK[effectiveFor(a)] ?? 9;
-      const rb = RANK[effectiveFor(b)] ?? 9;
-      return ra - rb || a.dueDate.getTime() - b.dueDate.getTime();
-    });
+    // Newest first: most recent entry on top, older ones below.
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
   return rows.map((p) => ({
     id: p.id,
