@@ -813,8 +813,8 @@ function Actions({ p, me, act }: { p: Detail; me: MeUser | null; act: DetailActi
   // Edit (raiser) and Delete (raiser or admin) are available until it's paid.
   const notFinal = p.status !== "PAID" && p.status !== "CONFIRMED" && p.status !== "CANCELLED";
   const canEdit = mine && notFinal;
-  // Admin can delete any entry; the raiser can delete their own until it's paid.
-  const canDelete = !!me?.isAdmin || (mine && p.status !== "PAID" && p.status !== "CONFIRMED");
+  // Delete stays available until it's done — for the raiser or any admin.
+  const canDelete = (mine || !!me?.isAdmin) && p.status !== "PAID" && p.status !== "CONFIRMED";
   return (
     <div className="actions">
       <span className="hint"><IcInfo />{hint}</span>

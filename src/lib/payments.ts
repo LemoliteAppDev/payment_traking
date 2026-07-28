@@ -374,9 +374,9 @@ export async function deletePayment(paymentId: string, actor: SessionUser): Prom
   if (payment.requestedById !== actor.id && !actor.isAdmin) {
     throw new ApiError(403, "FORBIDDEN", "You can't delete this payment.");
   }
-  // Raisers can only delete until it's paid; admins may delete any entry.
-  if ((payment.status === "PAID" || payment.status === "CONFIRMED") && !actor.isAdmin) {
-    throw new ApiError(409, "NOT_DELETABLE", "A paid payment can't be deleted.");
+  // A completed payment keeps its record — nobody deletes it once it's done.
+  if (payment.status === "PAID" || payment.status === "CONFIRMED") {
+    throw new ApiError(409, "NOT_DELETABLE", "A completed payment can't be deleted.");
   }
   // Remove the files from disk first (best-effort), then the DB rows (cascade).
   for (const a of payment.attachments) {
