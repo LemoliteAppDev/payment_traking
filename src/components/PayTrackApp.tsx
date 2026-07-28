@@ -409,10 +409,14 @@ function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, e
       </button>
 
       {open && (
-        <div className="notifpanel">
+        <div className="notifmodal" onClick={() => setOpen(false)}>
+        <div className="notifpanel" onClick={(e) => e.stopPropagation()}>
           <div className="nphead">
             <strong>Notifications</strong>
-            {unread > 0 && <button onClick={() => markRead.mutate()}>Mark all read</button>}
+            <div className="npheadr">
+              {unread > 0 && <button onClick={() => markRead.mutate()}>Mark all read</button>}
+              <button className="npclose" aria-label="Close" onClick={() => setOpen(false)}>✕</button>
+            </div>
           </div>
 
           {push === "off" && (
@@ -441,6 +445,7 @@ function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, e
               ))
             )}
           </div>
+        </div>
         </div>
       )}
     </div>
