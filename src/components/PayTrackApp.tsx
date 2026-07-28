@@ -945,21 +945,25 @@ function AccountsManager({ onToast }: { onToast: (m: string, err?: boolean) => v
     onSuccess: () => qc.invalidateQueries({ queryKey: ["payAccounts"] }),
     onError: (e: Error) => onToast(e.message, true),
   });
+  const canAdd = !!name.trim() && !mAdd.isPending;
   return (
     <div className="acctmgr">
       <div className="acctadd">
-        <input placeholder="New account name" value={name} onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) mAdd.mutate(name.trim()); }} />
-        <button className="btn btn-primary sm" disabled={!name.trim() || mAdd.isPending} onClick={() => mAdd.mutate(name.trim())}>Add</button>
+        <input placeholder="Add an account (e.g. HDFC)" value={name} onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && canAdd) mAdd.mutate(name.trim()); }} />
+        <button className="btn btn-primary sm" disabled={!canAdd} onClick={() => mAdd.mutate(name.trim())}>{mAdd.isPending ? "Adding…" : "Add"}</button>
       </div>
       <div className="acctlist">
         {accounts.map((a) => (
           <div key={a.id} className={`acctrow ${a.active ? "" : "off"}`}>
-            <span>{a.name}{a.active ? "" : " · hidden"}</span>
-            <button className="linklike" onClick={() => mActive.mutate({ id: a.id, active: !a.active })}>{a.active ? "Hide" : "Show"}</button>
+            <span className="acctico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18M5 21V10m14 11V10M3 10l9-6 9 6M9.5 21v-5h5v5" /></svg>
+            </span>
+            <span className="acctname">{a.name}{!a.active && <span className="acctbadge">Hidden</span>}</span>
+            <button className={`acctbtn ${a.active ? "" : "on"}`} onClick={() => mActive.mutate({ id: a.id, active: !a.active })}>{a.active ? "Hide" : "Show"}</button>
           </div>
         ))}
-        {accounts.length === 0 && <div className="acctrow"><span style={{ color: "var(--ink-3)" }}>No accounts yet</span></div>}
+        {accounts.length === 0 && <div className="acctempty">No accounts yet — add your first one above.</div>}
       </div>
     </div>
   );
