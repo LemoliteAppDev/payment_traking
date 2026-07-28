@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, isoDay, timeAgo, dueRank,
-  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role,
+  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
 import { enablePush, isPushEnabled, pushSupported, pushBlocked } from "@/lib/push-client";
@@ -202,8 +202,11 @@ export function PayTrackApp() {
           <TopBar me={me} onSignOut={() => signOutAction()} onAdd={() => setNewOpen(true)} onToast={showToast} onOpenPayment={(id) => setSelected(id)} onTeam={(isManager || isAdmin) ? () => setTeamOpen(true) : undefined} />
           {me && <NotifyPrompt onToast={showToast} />}
           <RemindBanner show={isPayer} all={all} />
-          <StatStrip all={all} isPayer={isPayer} isApprover={isApprover} isAdmin={isAdmin} />
-          <div className="dots" id="stripDots"><i className="on" /><i /><i /><i /></div>
+          {/* The summary strip is the payer's dashboard — hidden for admins & users. */}
+          {isPayer && <>
+            <StatStrip all={all} isPayer={isPayer} isApprover={isApprover} isAdmin={isAdmin} />
+            <div className="dots" id="stripDots"><i className="on" /><i /><i /><i /></div>
+          </>}
 
           <div className="body">
             <div className="listcol">
@@ -351,6 +354,62 @@ function TopBar({ me, onSignOut, onAdd, onToast, onOpenPayment, onTeam }: { me: 
   );
 }
 
+/* One notification row — tap to open, swipe left (or ✕ on desktop) to remove. */
+function NotifItem({ n, onOpen, onDismiss }: { n: NotificationItem; onOpen: () => void; onDismiss: () => void }) {
+  const [dx, setDx] = useState(0);
+  const [gone, setGone] = useState(false);
+  const startX = useRef<number | null>(null);
+  const startY = useRef<number | null>(null);
+  const swiping = useRef(false);
+
+  function remove() { setGone(true); setTimeout(onDismiss, 200); }
+
+  function onTouchStart(e: React.TouchEvent) {
+    startX.current = e.touches[0].clientX;
+    startY.current = e.touches[0].clientY;
+    swiping.current = false;
+  }
+  function onTouchMove(e: React.TouchEvent) {
+    if (startX.current === null) return;
+    const dX = e.touches[0].clientX - startX.current;
+    const dY = e.touches[0].clientY - (startY.current ?? 0);
+    if (!swiping.current) {
+      if (Math.abs(dX) > 8 && Math.abs(dX) > Math.abs(dY)) swiping.current = true;
+      else return;
+    }
+    setDx(Math.max(-160, Math.min(0, dX)));
+  }
+  function onTouchEnd() {
+    if (dx < -80) remove();
+    else setDx(0);
+    startX.current = null;
+  }
+
+  return (
+    <div className={`npitemwrap ${gone ? "gone" : ""}`}>
+      <div className="npdel">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2m-1 0v14H9V6M10 11v5M14 11v5" /></svg>
+        Remove
+      </div>
+      <button
+        className={`npitem ${n.unread ? "un" : ""}`}
+        style={{ transform: `translateX(${dx}px)`, transition: startX.current === null ? "transform .18s ease" : "none" }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onClick={() => { if (!swiping.current) onOpen(); }}
+      >
+        <div className="npav" style={{ background: colorFor(n.actor?.name ?? "") }}>{initials(n.actor?.name ?? "?")}</div>
+        <div className="npbody">
+          <div className="npmsg">{n.message}</div>
+          <div className="npmeta">{n.payment.payee} · {fmtPaise(n.payment.amount)} · {timeAgo(n.createdAt)}</div>
+        </div>
+        <span className="npx" role="button" aria-label="Remove" onClick={(e) => { e.stopPropagation(); remove(); }}>✕</span>
+      </button>
+    </div>
+  );
+}
+
 /* Notification centre: bell + unread badge, opens a panel of recent activity.
    The browser-push toggle lives inside the panel so there's one control. */
 function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, err?: boolean) => void; onOpenPayment: (id: string) => void }) {
@@ -359,8 +418,24 @@ function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, e
   const [push, setPush] = useState<"loading" | "on" | "off" | "blocked" | "unsupported">("loading");
 
   const notifQ = useQuery({ queryKey: ["notifications"], queryFn: api.notifications, refetchInterval: 10000 });
-  const items = notifQ.data?.items ?? [];
-  const unread = notifQ.data?.unread ?? 0;
+  const allItems = notifQ.data?.items ?? [];
+
+  // Swipe-dismissed notifications, remembered per device (they're a derived feed,
+  // so there's nothing to delete server-side — we just hide them here).
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try { setDismissed(new Set(JSON.parse(localStorage.getItem("dismissedNotifs") || "[]"))); } catch {}
+  }, []);
+  function dismiss(id: string) {
+    setDismissed((prev) => {
+      const next = new Set(prev); next.add(id);
+      try { localStorage.setItem("dismissedNotifs", JSON.stringify([...next].slice(-300))); } catch {}
+      return next;
+    });
+  }
+
+  const items = allItems.filter((n) => !dismissed.has(n.id));
+  const unread = items.filter((n) => n.unread).length;
 
   const markRead = useMutation({
     mutationFn: api.markNotificationsRead,
@@ -429,19 +504,12 @@ function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, e
               <div className="npempty">Nothing yet — you&apos;ll see activity here.</div>
             ) : (
               items.map((n) => (
-                <button
+                <NotifItem
                   key={n.id}
-                  className={`npitem ${n.unread ? "un" : ""}`}
-                  onClick={() => { onOpenPayment(n.payment.id); setOpen(false); }}
-                >
-                  <div className="npav" style={{ background: colorFor(n.actor?.name ?? "") }}>
-                    {initials(n.actor?.name ?? "?")}
-                  </div>
-                  <div className="npbody">
-                    <div className="npmsg">{n.message}</div>
-                    <div className="npmeta">{n.payment.payee} · {fmtPaise(n.payment.amount)} · {timeAgo(n.createdAt)}</div>
-                  </div>
-                </button>
+                  n={n}
+                  onOpen={() => { onOpenPayment(n.payment.id); setOpen(false); }}
+                  onDismiss={() => dismiss(n.id)}
+                />
               ))
             )}
           </div>
