@@ -177,7 +177,7 @@ a{color:inherit}
 .mobbar .btn{width:100%;font-size:15px;padding:14px}
 
 .detailcol{min-height:0}
-.detail{display:flex;flex-direction:column;height:100%;min-height:0}
+.detail{display:flex;flex-direction:column;height:100%;min-height:0;position:relative}
 .mobback{display:none;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid var(--line-2);font-weight:700;font-size:14.5px;color:var(--ink);background:var(--surface);flex:none;width:100%;text-align:left}
 .mobback svg{width:20px;height:20px;color:var(--brand);flex:none}
 .dhead{padding:16px 18px;border-bottom:1px solid var(--line-2);display:flex;gap:12px;align-items:flex-start;flex:none;flex-wrap:wrap}
@@ -233,18 +233,20 @@ a{color:inherit}
 .chatsend:disabled{opacity:.45;cursor:default}
 .chatsend svg{width:18px;height:18px;margin-left:-1px}
 
-/* Secure OTP thread (approver <-> payer) */
-.otpsec{flex:none;border-top:1px solid var(--line);background:var(--surface)}
-.otptoggle{display:flex;align-items:center;justify-content:space-between;width:100%;padding:12px 15px;background:var(--surface);cursor:pointer}
-.otptoggle:hover{background:var(--surface-2)}
-.otptitle{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;color:var(--ink)}
-.otplock{font-size:14px}
-.otpsub{font-size:11px;font-weight:500;color:var(--ink-3);text-transform:none;letter-spacing:0}
-.otpsec .chev{font-size:11px;color:var(--ink-3);transition:transform .2s ease}
-.otpsec .chev.open{transform:rotate(180deg)}
-.otpbox{padding:0 14px 12px;background:var(--surface-2);border-top:1px solid var(--line-2)}
-.otpnote{font-size:11.5px;color:var(--ink-2);background:var(--brand-soft);border-radius:9px;padding:9px 11px;margin:12px 0}
-.otplist{display:flex;flex-direction:column;gap:8px;max-height:220px;overflow-y:auto;margin-bottom:10px}
+/* Secure OTP thread (approver <-> payer) — floating button + popup */
+.otpfab{position:absolute;right:16px;bottom:150px;z-index:40;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-size:22px;background:linear-gradient(135deg,#0B7A6E,#075C53);color:#fff;box-shadow:0 10px 24px -8px rgba(11,122,110,.7),0 2px 6px rgba(16,32,46,.2);transition:transform .15s ease,box-shadow .15s}
+.otpfab:hover{transform:translateY(-2px);box-shadow:0 14px 30px -8px rgba(11,122,110,.8)}
+.otpfab:active{transform:translateY(0)}
+.otpfabdot{position:absolute;top:-3px;right:-3px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--over);color:#fff;font-size:11px;font-weight:700;display:grid;place-items:center;border:2px solid var(--surface);font-family:'Space Grotesk',sans-serif}
+.otpmodal{position:fixed;inset:0;z-index:200;background:rgba(8,14,22,.5);display:flex;align-items:center;justify-content:center;padding:18px;animation:fade .14s ease}
+.otpcard{width:min(420px,100%);max-height:82vh;display:flex;flex-direction:column;background:var(--surface);border-radius:16px;box-shadow:var(--shadow-lg);overflow:hidden;animation:pop .16s ease}
+.otpcardhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line-2);flex:none}
+.otptitle{display:flex;align-items:center;gap:8px;font-size:14.5px;font-weight:700;color:var(--ink)}
+.otplock{font-size:15px}
+.otpsub{font-size:11px;font-weight:500;color:var(--ink-3)}
+.otpnote{font-size:11.5px;color:var(--ink-2);background:var(--brand-soft);border-radius:9px;padding:9px 11px;margin:12px 14px 0}
+.otplist{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;padding:12px 14px}
+.otpcard .chatbox{border-top:1px solid var(--line-2)}
 .otpempty{font-size:12.5px;color:var(--ink-3);text-align:center;padding:14px}
 .otpmsg{max-width:85%;align-self:flex-start}
 .otpmsg.me{align-self:flex-end;text-align:right}
@@ -252,7 +254,6 @@ a{color:inherit}
 .otpbody{display:inline-block;font-family:'Space Grotesk',monospace;font-size:15px;font-weight:600;letter-spacing:.02em;padding:9px 13px;border-radius:11px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;word-break:break-word}
 .otpmsg.me .otpbody{background:var(--brand-soft);border-color:#BEE6DF;color:var(--brand-ink)}
 .otpbody:not(.shown){letter-spacing:.12em;color:var(--ink-3);font-weight:700;font-size:12.5px}
-.otpsec .chatbox{border-top:none;padding:0;background:transparent}
 .actions{padding:14px 18px calc(16px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface);display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:none}
 .actions .hint{font-size:12.5px;color:var(--ink-2);margin-right:auto;display:flex;align-items:flex-start;gap:6px;line-height:1.4}
 .actions .hint svg{width:16px;height:16px;color:var(--ink-3);flex:none;margin-top:1px}
