@@ -142,6 +142,10 @@ export const api = {
     req<{ account: PayAccountLite }>("/api/v1/pay-accounts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }),
   payAccountSetActive: (id: string, active: boolean) =>
     req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ active }) }),
+  payAccountRename: (id: string, name: string) =>
+    req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }),
+  payAccountDelete: (id: string) =>
+    req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "DELETE" }),
   // secure OTP thread (approver <-> payer)
   otpList: (id: string) => req<{ messages: OtpMsg[] }>(`/api/v1/payments/${id}/otp`),
   otpSend: (id: string, message: string) =>

@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, isoDay, timeAgo, dueRank,
-  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem, type OtpMsg,
+  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem, type OtpMsg, type PayAccountLite,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
 import { enablePush, isPushEnabled, pushSupported, pushBlocked } from "@/lib/push-client";
@@ -1091,6 +1091,40 @@ function RejectSheet({ onClose, onSubmit, busy }: { onClose: () => void; onSubmi
 }
 
 /* Pay-from accounts manager (any admin). Add a new source or hide/show one. */
+function AccountRow({ a, onToast }: { a: PayAccountLite; onToast: (m: string, err?: boolean) => void }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(a.name);
+  const inval = () => qc.invalidateQueries({ queryKey: ["payAccounts"] });
+  const mRename = useMutation({ mutationFn: (name: string) => api.payAccountRename(a.id, name), onSuccess: () => { inval(); setEditing(false); onToast("Account renamed"); }, onError: (e: Error) => onToast(e.message, true) });
+  const mActive = useMutation({ mutationFn: (active: boolean) => api.payAccountSetActive(a.id, active), onSuccess: inval, onError: (e: Error) => onToast(e.message, true) });
+  const mDelete = useMutation({ mutationFn: () => api.payAccountDelete(a.id), onSuccess: () => { inval(); onToast("Account deleted"); }, onError: (e: Error) => onToast(e.message, true) });
+
+  if (editing) {
+    return (
+      <div className="acctrow editing">
+        <input className="acctedit" autoFocus value={val} onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && val.trim()) mRename.mutate(val.trim()); if (e.key === "Escape") { setEditing(false); setVal(a.name); } }} />
+        <button className="acctbtn on" disabled={!val.trim() || mRename.isPending} onClick={() => mRename.mutate(val.trim())}>Save</button>
+        <button className="acctbtn" onClick={() => { setEditing(false); setVal(a.name); }}>Cancel</button>
+      </div>
+    );
+  }
+  return (
+    <div className={`acctrow ${a.active ? "" : "off"}`}>
+      <span className="acctico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18M5 21V10m14 11V10M3 10l9-6 9 6M9.5 21v-5h5v5" /></svg>
+      </span>
+      <span className="acctname">{a.name}{!a.active && <span className="acctbadge">Hidden</span>}</span>
+      <div className="acctacts">
+        <button className="acctic" title="Rename" onClick={() => { setVal(a.name); setEditing(true); }}>✏️</button>
+        <button className={`acctbtn ${a.active ? "" : "on"}`} onClick={() => mActive.mutate(!a.active)}>{a.active ? "Hide" : "Show"}</button>
+        <button className="acctic del" title="Delete permanently" onClick={() => { if (window.confirm(`Delete "${a.name}" from the list? Existing payments keep their label.`)) mDelete.mutate(); }}>🗑</button>
+      </div>
+    </div>
+  );
+}
+
 function AccountsManager({ onToast }: { onToast: (m: string, err?: boolean) => void }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["payAccounts"], queryFn: api.payAccounts });
@@ -1099,11 +1133,6 @@ function AccountsManager({ onToast }: { onToast: (m: string, err?: boolean) => v
   const mAdd = useMutation({
     mutationFn: (n: string) => api.payAccountCreate(n),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["payAccounts"] }); setName(""); onToast("Account added"); },
-    onError: (e: Error) => onToast(e.message, true),
-  });
-  const mActive = useMutation({
-    mutationFn: ({ id, active }: { id: string; active: boolean }) => api.payAccountSetActive(id, active),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["payAccounts"] }),
     onError: (e: Error) => onToast(e.message, true),
   });
   const canAdd = !!name.trim() && !mAdd.isPending;
@@ -1115,15 +1144,7 @@ function AccountsManager({ onToast }: { onToast: (m: string, err?: boolean) => v
         <button className="btn btn-primary sm" disabled={!canAdd} onClick={() => mAdd.mutate(name.trim())}>{mAdd.isPending ? "Adding…" : "Add"}</button>
       </div>
       <div className="acctlist">
-        {accounts.map((a) => (
-          <div key={a.id} className={`acctrow ${a.active ? "" : "off"}`}>
-            <span className="acctico">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18M5 21V10m14 11V10M3 10l9-6 9 6M9.5 21v-5h5v5" /></svg>
-            </span>
-            <span className="acctname">{a.name}{!a.active && <span className="acctbadge">Hidden</span>}</span>
-            <button className={`acctbtn ${a.active ? "" : "on"}`} onClick={() => mActive.mutate({ id: a.id, active: !a.active })}>{a.active ? "Hide" : "Show"}</button>
-          </div>
-        ))}
+        {accounts.map((a) => <AccountRow key={a.id} a={a} onToast={onToast} />)}
         {accounts.length === 0 && <div className="acctempty">No accounts yet — add your first one above.</div>}
       </div>
     </div>

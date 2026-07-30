@@ -48,3 +48,29 @@ export async function setPayAccountActive(id: string, active: boolean, actor: Se
   if (!acc) throw new ApiError(404, "NOT_FOUND", "Account not found.");
   await prisma.payAccount.update({ where: { id }, data: { active } });
 }
+
+/** Rename an account and carry the new name onto every payment that used it. */
+export async function renamePayAccount(id: string, name: string, actor: SessionUser): Promise<PayAccountLite> {
+  if (!actor.isAdmin) throw new ApiError(403, "FORBIDDEN", "Only an admin can rename a pay-from account.");
+  const trimmed = name.trim();
+  if (!trimmed) throw new ApiError(400, "INVALID", "Account name is required.");
+  const acc = await prisma.payAccount.findUnique({ where: { id } });
+  if (!acc) throw new ApiError(404, "NOT_FOUND", "Account not found.");
+  const clash = await prisma.payAccount.findFirst({ where: { name: trimmed, id: { not: id } } });
+  if (clash) throw new ApiError(409, "DUPLICATE", "Another account already has that name.");
+  if (trimmed !== acc.name) {
+    await prisma.$transaction([
+      prisma.payAccount.update({ where: { id }, data: { name: trimmed } }),
+      prisma.payment.updateMany({ where: { payFrom: acc.name }, data: { payFrom: trimmed } }),
+    ]);
+  }
+  return { id, name: trimmed, active: acc.active };
+}
+
+/** Permanently remove an account. Existing payments keep the stored name. */
+export async function deletePayAccount(id: string, actor: SessionUser): Promise<void> {
+  if (!actor.isAdmin) throw new ApiError(403, "FORBIDDEN", "Only an admin can delete a pay-from account.");
+  const acc = await prisma.payAccount.findUnique({ where: { id } });
+  if (!acc) throw new ApiError(404, "NOT_FOUND", "Account not found.");
+  await prisma.payAccount.delete({ where: { id } });
+}
