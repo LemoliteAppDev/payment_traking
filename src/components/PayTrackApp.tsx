@@ -253,6 +253,7 @@ export function PayTrackApp() {
           {paidFor && <PaidSheet onClose={() => setPaidFor(null)} onSubmit={(f) => mPay.mutate({ id: paidFor, form: f })} busy={mPay.isPending} onError={(m) => showToast(m, true)} />}
           {rejectFor && <RejectSheet onClose={() => setRejectFor(null)} onSubmit={(reason) => mReject.mutate({ id: rejectFor, reason })} busy={mReject.isPending} />}
           {teamOpen && <TeamSheet onClose={() => setTeamOpen(false)} onToast={showToast} isManager={isManager} isAdmin={isAdmin} />}
+          {(isApprover || isPayer) && <OtpFab />}
 
           <div className={`toast ${toast ? "on" : ""} ${toast?.err ? "err" : ""}`}>
             {!toast?.err && <IcCheck />}<span>{toast?.msg}</span>
@@ -713,9 +714,6 @@ function PaymentDetail(props: { detail: Detail | null; me: MeUser | null; loadin
       </div>
       <div className="thread">{p.events.map((e) => <ThreadMsg key={e.id} ev={e} />)}</div>
       <ChatBox key={p.id} paymentId={p.id} />
-      {(me?.isApprover || me?.isPayer) && p.status !== "PAID" && p.status !== "CONFIRMED" && p.status !== "CANCELLED" && (
-        <OtpFab key={`otp-${p.id}`} paymentId={p.id} />
-      )}
       <Actions p={p} me={me} act={props} />
     </>
   );
@@ -765,19 +763,19 @@ function OtpMessageRow({ m }: { m: OtpMsg }) {
   );
 }
 
-function OtpFab({ paymentId }: { paymentId: string }) {
+function OtpFab() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const q = useQuery({
-    queryKey: ["otp", paymentId],
-    queryFn: () => api.otpList(paymentId),
+    queryKey: ["otp"],
+    queryFn: () => api.otpList(),
     refetchInterval: open ? 8000 : 20000, // light background poll so the badge shows up
   });
   const msgs = q.data?.messages ?? [];
   const m = useMutation({
-    mutationFn: (msg: string) => api.otpSend(paymentId, msg),
-    onSuccess: (d) => { setText(""); qc.setQueryData(["otp", paymentId], d); },
+    mutationFn: (msg: string) => api.otpSend(msg),
+    onSuccess: (d) => { setText(""); qc.setQueryData(["otp"], d); },
   });
   const send = () => { const t = text.trim(); if (t && !m.isPending) m.mutate(t); };
 

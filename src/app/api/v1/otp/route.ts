@@ -5,15 +5,14 @@ import { listOtpMessages, postOtpMessage } from "@/lib/otp";
 
 const bodySchema = z.object({ message: z.string().min(1).max(200) });
 
-export const GET = route(async (_req: Request, ctx: { params: Promise<{ id: string }> }) => {
+// Standalone secure OTP channel (approver <-> payer). Not tied to a payment.
+export const GET = route(async () => {
   const user = await requireUser();
-  const { id } = await ctx.params;
-  return json({ messages: await listOtpMessages(id, user) });
+  return json({ messages: await listOtpMessages(user) });
 });
 
-export const POST = route(async (req: Request, ctx: { params: Promise<{ id: string }> }) => {
+export const POST = route(async (req: Request) => {
   const user = await requireUser();
-  const { id } = await ctx.params;
   const { message } = bodySchema.parse(await readJson(req));
-  return json({ messages: await postOtpMessage(id, user, message) });
+  return json({ messages: await postOtpMessage(user, message) });
 });

@@ -146,10 +146,10 @@ export const api = {
     req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }),
   payAccountDelete: (id: string) =>
     req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "DELETE" }),
-  // secure OTP thread (approver <-> payer)
-  otpList: (id: string) => req<{ messages: OtpMsg[] }>(`/api/v1/payments/${id}/otp`),
-  otpSend: (id: string, message: string) =>
-    req<{ messages: OtpMsg[] }>(`/api/v1/payments/${id}/otp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message }) }),
+  // standalone secure OTP channel (approver <-> payer)
+  otpList: () => req<{ messages: OtpMsg[] }>(`/api/v1/otp`),
+  otpSend: (message: string) =>
+    req<{ messages: OtpMsg[] }>(`/api/v1/otp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message }) }),
 };
 
 // ── UI helpers ───────────────────────────────────────────────────────

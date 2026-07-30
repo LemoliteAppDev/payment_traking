@@ -1,4 +1,5 @@
-// Secure OTP thread for a payment — approver <-> payer only.
+// Standalone secure OTP channel — one shared thread between the approver(s) and
+// payer(s), not tied to any payment.
 // - Access is server-enforced to users who can approve or pay.
 // - Bodies are encrypted at rest and auto-expire (and are purged on read).
 // - Push carries NO content, so nothing leaks to a lock screen.
@@ -19,30 +20,23 @@ export interface OtpMsg {
   expiresAt: string;
 }
 
-/** Only the approver(s) and payer(s) may use the OTP thread. */
+/** Only the approver(s) and payer(s) may use the OTP channel. */
 export function canUseOtp(actor: SessionUser): boolean {
   return !!actor.isApprover || !!actor.isPayer;
 }
 function requireOtpAccess(actor: SessionUser): void {
-  if (!canUseOtp(actor)) throw new ApiError(403, "FORBIDDEN", "Only the approver and payer can use the secure OTP thread.");
+  if (!canUseOtp(actor)) throw new ApiError(403, "FORBIDDEN", "Only the approver and payer can use the secure OTP channel.");
 }
 
-async function purgeExpired(paymentId: string): Promise<void> {
-  await prisma.otpMessage.deleteMany({ where: { paymentId, expiresAt: { lte: new Date() } } });
+async function purgeExpired(): Promise<void> {
+  await prisma.otpMessage.deleteMany({ where: { paymentId: null, expiresAt: { lte: new Date() } } });
 }
 
-export async function listOtpMessages(paymentId: string, actor: SessionUser): Promise<OtpMsg[]> {
+export async function listOtpMessages(actor: SessionUser): Promise<OtpMsg[]> {
   requireOtpAccess(actor);
-  const payment = await prisma.payment.findUnique({ where: { id: paymentId }, select: { status: true } });
-  if (!payment) throw new ApiError(404, "NOT_FOUND", "Payment not found.");
-  await purgeExpired(paymentId);
-  // Once paid/done there's nothing left to share — keep the thread empty.
-  if (payment.status === "PAID" || payment.status === "CONFIRMED" || payment.status === "CANCELLED") {
-    await prisma.otpMessage.deleteMany({ where: { paymentId } });
-    return [];
-  }
+  await purgeExpired();
   const rows = await prisma.otpMessage.findMany({
-    where: { paymentId },
+    where: { paymentId: null },
     orderBy: { createdAt: "asc" },
     include: { sender: { select: { name: true } } },
   });
@@ -56,36 +50,25 @@ export async function listOtpMessages(paymentId: string, actor: SessionUser): Pr
   }));
 }
 
-export async function postOtpMessage(paymentId: string, actor: SessionUser, message: string): Promise<OtpMsg[]> {
+export async function postOtpMessage(actor: SessionUser, message: string): Promise<OtpMsg[]> {
   requireOtpAccess(actor);
   const text = message.trim();
   if (!text) throw new ApiError(400, "EMPTY", "Type a message first.");
   if (text.length > 200) throw new ApiError(400, "TOO_LONG", "That's too long for an OTP note.");
-  const payment = await prisma.payment.findUnique({ where: { id: paymentId }, select: { status: true, payee: true } });
-  if (!payment) throw new ApiError(404, "NOT_FOUND", "Payment not found.");
-  if (payment.status === "PAID" || payment.status === "CONFIRMED" || payment.status === "CANCELLED") {
-    throw new ApiError(409, "CLOSED", "This payment is closed — the secure thread is off.");
-  }
 
   const expiresAt = new Date(Date.now() + TTL_MIN * 60_000);
   await prisma.otpMessage.create({
-    data: { paymentId, senderId: actor.id, body: encryptOtp(text), expiresAt },
+    data: { paymentId: null, senderId: actor.id, body: encryptOtp(text), expiresAt },
   });
 
-  // Notify the counterpart(s) — the OTHER role — with NO message content.
+  // Notify the counterpart(s) — the OTHER approver/payer — with NO message content.
   const counterparts = await prisma.user.findMany({
-    where: {
-      active: true,
-      id: { not: actor.id },
-      OR: [{ isApprover: true }, { isPayer: true }],
-    },
+    where: { active: true, id: { not: actor.id }, OR: [{ isApprover: true }, { isPayer: true }] },
     select: { id: true },
   });
   await Promise.all(
-    counterparts.map((u) =>
-      sendPushToUser(u.id, { title: "🔒 New secure message", body: `On ${payment.payee}`, url: "/" }),
-    ),
+    counterparts.map((u) => sendPushToUser(u.id, { title: "🔒 New secure message", body: "Tap to view", url: "/" })),
   ).catch((e) => console.error("[otp] notify failed", e));
 
-  return listOtpMessages(paymentId, actor);
+  return listOtpMessages(actor);
 }

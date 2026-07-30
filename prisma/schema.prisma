@@ -206,8 +206,8 @@ model PayAccount {
 // Body is encrypted at rest; rows auto-expire and are purged on read.
 model OtpMessage {
   id        String   @id @default(cuid())
-  paymentId String
-  payment   Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  paymentId String?
+  payment   Payment? @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   senderId  String
   sender    User     @relation(fields: [senderId], references: [id])
   body      String   @db.Text // AES-256-GCM ciphertext (iv:tag:data, base64)

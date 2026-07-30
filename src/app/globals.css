@@ -234,7 +234,7 @@ a{color:inherit}
 .chatsend svg{width:18px;height:18px;margin-left:-1px}
 
 /* Secure OTP thread (approver <-> payer) — floating button + popup */
-.otpfab{position:absolute;right:16px;bottom:150px;z-index:40;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-size:22px;background:linear-gradient(135deg,#0B7A6E,#075C53);color:#fff;box-shadow:0 10px 24px -8px rgba(11,122,110,.7),0 2px 6px rgba(16,32,46,.2);transition:transform .15s ease,box-shadow .15s}
+.otpfab{position:fixed;right:20px;bottom:24px;z-index:120;width:54px;height:54px;border-radius:50%;display:grid;place-items:center;font-size:22px;background:linear-gradient(135deg,#0B7A6E,#075C53);color:#fff;box-shadow:0 10px 24px -8px rgba(11,122,110,.7),0 2px 6px rgba(16,32,46,.2);transition:transform .15s ease,box-shadow .15s}
 .otpfab:hover{transform:translateY(-2px);box-shadow:0 14px 30px -8px rgba(11,122,110,.8)}
 .otpfab:active{transform:translateY(0)}
 .otpfabdot{position:absolute;top:-3px;right:-3px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--over);color:#fff;font-size:11px;font-weight:700;display:grid;place-items:center;border:2px solid var(--surface);font-family:'Space Grotesk',sans-serif}
@@ -355,6 +355,8 @@ a{color:inherit}
   .modal{max-height:94dvh;border-radius:22px 22px 0 0;animation:sheet .26s cubic-bezier(.22,1,.36,1)}
   .mhead::before{content:"";position:absolute;top:7px;left:50%;transform:translateX(-50%);width:40px;height:4px;border-radius:2px;background:var(--line)}
   .mfoot .btn{flex:1}
+  .otpfab{bottom:calc(88px + env(safe-area-inset-bottom));right:16px}
+  body.viewing .otpfab{display:none}
 }
 
 /* ═══════════ DESKTOP / TABLET (≥ 860px): two-pane ═══════════ */
@@ -366,6 +368,7 @@ a{color:inherit}
   .listcol{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
   .detailcol{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;display:flex}
   .detailcol .detail{width:100%}
+  .otpfab{bottom:150px;right:26px}
   .scrim{align-items:center;justify-content:center;padding:24px}
   .modal{max-width:460px;max-height:90dvh;border-radius:18px;animation:pop .18s ease}
   .mhead::before{display:none}
