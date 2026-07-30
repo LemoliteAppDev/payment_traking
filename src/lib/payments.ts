@@ -403,6 +403,31 @@ export async function nudgePayment(paymentId: string, actor: SessionUser): Promi
   return loadPayment(paymentId);
 }
 
+// ── Chat: post a message on a payment (NOTE event) ───────────────────
+export async function postNote(paymentId: string, actor: SessionUser, message: string): Promise<FullPayment> {
+  const text = message.trim();
+  if (!text) throw new ApiError(400, "EMPTY_MESSAGE", "Type a message first.");
+  if (text.length > 1000) throw new ApiError(400, "TOO_LONG", "Message is too long.");
+  const payment = await loadPayment(paymentId);
+  await prisma.paymentEvent.create({
+    data: { paymentId, actorId: actor.id, type: "NOTE", message: text },
+  });
+  // Notify the other people on this payment — the raiser, the payer(s), the approver(s).
+  const people = await prisma.user.findMany({
+    where: { active: true, OR: [{ id: payment.requestedById }, { isPayer: true }, { isApprover: true }] },
+    select: { id: true },
+  });
+  const recipients = new Set(people.map((u) => u.id));
+  recipients.delete(actor.id);
+  const preview = text.length > 90 ? `${text.slice(0, 89)}…` : text;
+  await Promise.all(
+    [...recipients].map((id) =>
+      sendPushToUser(id, { title: `${actor.name} · ${payment.payee}`, body: preview, url: "/" }),
+    ),
+  ).catch((e) => console.error("[notify] failed", e));
+  return loadPayment(paymentId);
+}
+
 // ── List with server-side filter + search ────────────────────────────
 // Urgency key: overdue < due-today < upcoming < paid/done (see dueRank in client.ts).
 const DAY_MS = 86400000;

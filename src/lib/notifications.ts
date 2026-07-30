@@ -14,6 +14,7 @@ function whereFor(user: SessionUser): Prisma.PaymentEventWhereInput {
     or.push({ type: "REQUEST", payment: { requestedBy: { role: "USER" } } });
     or.push({ type: "RESUBMIT" });
     or.push({ type: "EDIT", payment: { status: { in: ["AWAITING_APPROVAL", "RETURNED"] } } });
+    or.push({ type: "NOTE" }); // chat messages
   }
   if (user.isPayer) {
     // Payments that have reached the payer: approvals, admin-raised requests,
@@ -23,6 +24,7 @@ function whereFor(user: SessionUser): Prisma.PaymentEventWhereInput {
     or.push({ type: "EDIT", payment: { status: { in: ["REQUESTED", "SCHEDULED", "HOLD"] } } });
     or.push({ type: "NUDGE" });
     or.push({ type: "CONFIRM" });
+    or.push({ type: "NOTE" }); // chat messages
   }
   return {
     actorId: { not: user.id }, // never notify someone about their own action

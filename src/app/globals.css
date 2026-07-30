@@ -225,6 +225,13 @@ a{color:inherit}
 .lbbtn:hover{background:rgba(255,255,255,.26)}
 .lbbtn svg{width:17px;height:17px}
 .lbbtn.lbx{width:40px;padding:0;justify-content:center;font-size:16px}
+.chatbox{display:flex;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid var(--line);background:var(--surface);flex:none}
+.chatin{flex:1;min-width:0;font-family:inherit;font-size:14.5px;padding:11px 14px;border:1px solid var(--line);border-radius:999px;background:var(--surface-2);color:var(--ink)}
+.chatin:focus{outline:none;border-color:var(--brand);background:#fff;box-shadow:0 0 0 3px var(--brand-soft)}
+.chatsend{flex:none;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:var(--brand);color:#fff;transition:.15s}
+.chatsend:hover:not(:disabled){background:var(--brand-ink)}
+.chatsend:disabled{opacity:.45;cursor:default}
+.chatsend svg{width:18px;height:18px;margin-left:-1px}
 .actions{padding:14px 18px calc(16px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface);display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:none}
 .actions .hint{font-size:12.5px;color:var(--ink-2);margin-right:auto;display:flex;align-items:flex-start;gap:6px;line-height:1.4}
 .actions .hint svg{width:16px;height:16px;color:var(--ink-3);flex:none;margin-top:1px}

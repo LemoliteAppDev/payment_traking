@@ -51,6 +51,10 @@ export const paidNoteSchema = z.object({
   note: z.string().trim().max(500).optional().default(""),
 });
 
+export const noteMessageSchema = z.object({
+  message: z.string().trim().min(1, "Type a message first.").max(1000),
+});
+
 export const LIST_FILTERS = ["all", "mine", "requested", "scheduled", "overdue", "paid"] as const;
 export type ListFilter = (typeof LIST_FILTERS)[number];
 

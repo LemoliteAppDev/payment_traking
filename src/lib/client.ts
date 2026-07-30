@@ -112,6 +112,10 @@ export const api = {
       headers: { "idempotency-key": idempotencyKey },
     }),
   nudge: (id: string) => req<{ payment: Detail }>(`/api/v1/payments/${id}/nudge`, { method: "POST" }),
+  postNote: (id: string, message: string) =>
+    req<{ payment: Detail }>(`/api/v1/payments/${id}/note`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message }),
+    }),
   approve: (id: string) => req<{ payment: Detail }>(`/api/v1/payments/${id}/approve`, { method: "POST" }),
   reject: (id: string, reason: string) =>
     req<{ payment: Detail }>(`/api/v1/payments/${id}/reject`, {

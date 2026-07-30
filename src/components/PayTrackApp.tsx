@@ -712,8 +712,38 @@ function PaymentDetail(props: { detail: Detail | null; me: MeUser | null; loadin
         <div className="cell"><div className="k">Amount</div><div className="v">{fmtPaise(p.amount)}</div></div>
       </div>
       <div className="thread">{p.events.map((e) => <ThreadMsg key={e.id} ev={e} />)}</div>
+      <ChatBox key={p.id} paymentId={p.id} />
       <Actions p={p} me={me} act={props} />
     </>
+  );
+}
+
+/* Chat: anyone on a payment (raiser, approver, payer, admin) can message here. */
+function ChatBox({ paymentId }: { paymentId: string }) {
+  const qc = useQueryClient();
+  const [text, setText] = useState("");
+  const m = useMutation({
+    mutationFn: (msg: string) => api.postNote(paymentId, msg),
+    onSuccess: () => {
+      setText("");
+      qc.invalidateQueries({ queryKey: ["payment", paymentId] });
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+  const send = () => { const t = text.trim(); if (t && !m.isPending) m.mutate(t); };
+  return (
+    <div className="chatbox">
+      <input
+        className="chatin"
+        placeholder="Write a message…"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); send(); } }}
+      />
+      <button className="chatsend" onClick={send} disabled={!text.trim() || m.isPending} aria-label="Send message">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
+      </button>
+    </div>
   );
 }
 
