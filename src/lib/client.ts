@@ -21,6 +21,8 @@ export interface Me { me: MeUser | null }
 
 export interface PayAccountLite { id: string; name: string; active: boolean }
 
+export interface OtpMsg { id: string; fromMe: boolean; senderName: string; body: string; createdAt: string; expiresAt: string }
+
 export interface Card {
   id: string;
   amount: string; // paise
@@ -140,6 +142,10 @@ export const api = {
     req<{ account: PayAccountLite }>("/api/v1/pay-accounts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }),
   payAccountSetActive: (id: string, active: boolean) =>
     req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ active }) }),
+  // secure OTP thread (approver <-> payer)
+  otpList: (id: string) => req<{ messages: OtpMsg[] }>(`/api/v1/payments/${id}/otp`),
+  otpSend: (id: string, message: string) =>
+    req<{ messages: OtpMsg[] }>(`/api/v1/payments/${id}/otp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message }) }),
 };
 
 // ── UI helpers ───────────────────────────────────────────────────────

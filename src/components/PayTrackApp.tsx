@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, isoDay, timeAgo, dueRank,
-  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem,
+  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem, type OtpMsg,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
 import { enablePush, isPushEnabled, pushSupported, pushBlocked } from "@/lib/push-client";
@@ -713,6 +713,9 @@ function PaymentDetail(props: { detail: Detail | null; me: MeUser | null; loadin
       </div>
       <div className="thread">{p.events.map((e) => <ThreadMsg key={e.id} ev={e} />)}</div>
       <ChatBox key={p.id} paymentId={p.id} />
+      {(me?.isApprover || me?.isPayer) && p.status !== "PAID" && p.status !== "CONFIRMED" && p.status !== "CANCELLED" && (
+        <OtpPanel key={`otp-${p.id}`} paymentId={p.id} />
+      )}
       <Actions p={p} me={me} act={props} />
     </>
   );
@@ -743,6 +746,66 @@ function ChatBox({ paymentId }: { paymentId: string }) {
       <button className="chatsend" onClick={send} disabled={!text.trim() || m.isPending} aria-label="Send message">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
       </button>
+    </div>
+  );
+}
+
+/* Secure OTP thread — approver <-> payer only. Collapsed by default; messages
+   are blurred until tapped and auto-expire. Opened on demand so it stays private. */
+function OtpMessageRow({ m }: { m: OtpMsg }) {
+  const [show, setShow] = useState(false);
+  const left = Math.max(0, Math.round((new Date(m.expiresAt).getTime() - Date.now()) / 60000));
+  return (
+    <div className={`otpmsg ${m.fromMe ? "me" : ""}`}>
+      <div className="otphead">{m.fromMe ? "You" : m.senderName} · {timeAgo(m.createdAt)} · expires in {left}m</div>
+      <button className={`otpbody ${show ? "shown" : ""}`} onClick={() => setShow((s) => !s)} title={show ? "Tap to hide" : "Tap to reveal"}>
+        {show ? m.body : "•••••• tap to reveal"}
+      </button>
+    </div>
+  );
+}
+
+function OtpPanel({ paymentId }: { paymentId: string }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const q = useQuery({
+    queryKey: ["otp", paymentId],
+    queryFn: () => api.otpList(paymentId),
+    enabled: open,
+    refetchInterval: open ? 8000 : false,
+  });
+  const msgs = q.data?.messages ?? [];
+  const m = useMutation({
+    mutationFn: (msg: string) => api.otpSend(paymentId, msg),
+    onSuccess: (d) => { setText(""); qc.setQueryData(["otp", paymentId], d); },
+  });
+  const send = () => { const t = text.trim(); if (t && !m.isPending) m.mutate(t); };
+
+  return (
+    <div className="otpsec">
+      <button type="button" className="otptoggle" onClick={() => setOpen((o) => !o)}>
+        <span className="otptitle"><span className="otplock">🔒</span> Secure OTP <span className="otpsub">approver ↔ payer only</span></span>
+        <span className={`chev ${open ? "open" : ""}`}>▾</span>
+      </button>
+      {open && (
+        <div className="otpbox">
+          <div className="otpnote">Private to the approver and payer. Messages are encrypted, hidden from notifications, and vanish after 10 minutes.</div>
+          <div className="otplist">
+            {msgs.length === 0
+              ? <div className="otpempty">No messages. Share an OTP securely here.</div>
+              : msgs.map((x) => <OtpMessageRow key={x.id} m={x} />)}
+          </div>
+          <div className="chatbox">
+            <input className="chatin" placeholder="Type the OTP or a note…" value={text} autoComplete="off"
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); send(); } }} />
+            <button className="chatsend" onClick={send} disabled={!text.trim() || m.isPending} aria-label="Send securely">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -232,6 +232,27 @@ a{color:inherit}
 .chatsend:hover:not(:disabled){background:var(--brand-ink)}
 .chatsend:disabled{opacity:.45;cursor:default}
 .chatsend svg{width:18px;height:18px;margin-left:-1px}
+
+/* Secure OTP thread (approver <-> payer) */
+.otpsec{flex:none;border-top:1px solid var(--line);background:var(--surface)}
+.otptoggle{display:flex;align-items:center;justify-content:space-between;width:100%;padding:12px 15px;background:var(--surface);cursor:pointer}
+.otptoggle:hover{background:var(--surface-2)}
+.otptitle{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;color:var(--ink)}
+.otplock{font-size:14px}
+.otpsub{font-size:11px;font-weight:500;color:var(--ink-3);text-transform:none;letter-spacing:0}
+.otpsec .chev{font-size:11px;color:var(--ink-3);transition:transform .2s ease}
+.otpsec .chev.open{transform:rotate(180deg)}
+.otpbox{padding:0 14px 12px;background:var(--surface-2);border-top:1px solid var(--line-2)}
+.otpnote{font-size:11.5px;color:var(--ink-2);background:var(--brand-soft);border-radius:9px;padding:9px 11px;margin:12px 0}
+.otplist{display:flex;flex-direction:column;gap:8px;max-height:220px;overflow-y:auto;margin-bottom:10px}
+.otpempty{font-size:12.5px;color:var(--ink-3);text-align:center;padding:14px}
+.otpmsg{max-width:85%;align-self:flex-start}
+.otpmsg.me{align-self:flex-end;text-align:right}
+.otphead{font-size:10.5px;color:var(--ink-3);margin-bottom:3px}
+.otpbody{display:inline-block;font-family:'Space Grotesk',monospace;font-size:15px;font-weight:600;letter-spacing:.02em;padding:9px 13px;border-radius:11px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;word-break:break-word}
+.otpmsg.me .otpbody{background:var(--brand-soft);border-color:#BEE6DF;color:var(--brand-ink)}
+.otpbody:not(.shown){letter-spacing:.12em;color:var(--ink-3);font-weight:700;font-size:12.5px}
+.otpsec .chatbox{border-top:none;padding:0;background:transparent}
 .actions{padding:14px 18px calc(16px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface);display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:none}
 .actions .hint{font-size:12.5px;color:var(--ink-2);margin-right:auto;display:flex;align-items:flex-start;gap:6px;line-height:1.4}
 .actions .hint svg{width:16px;height:16px;color:var(--ink-3);flex:none;margin-top:1px}
