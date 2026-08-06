@@ -9,8 +9,13 @@ export const GET = route(async (_req: Request, ctx: { params: Promise<{ id: stri
   const user = await requireUser();
   const { id } = await ctx.params;
   const payment = await loadPayment(id);
+  // Private payments are only for the approver/payer.
+  const canSeePrivate = user.isApprover || user.isPayer;
+  if (payment.isPrivate && !canSeePrivate) {
+    throw new ApiError(404, "NOT_FOUND", "Payment not found.");
+  }
   // Visibility: admins see all; a user may only see what they raised.
-  if (!user.isAdmin && payment.requestedById !== user.id) {
+  if (!payment.isPrivate && !user.isAdmin && payment.requestedById !== user.id) {
     throw new ApiError(403, "FORBIDDEN", "You don't have access to this payment.");
   }
   return json({ payment: serializePayment(payment) });

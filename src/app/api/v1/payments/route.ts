@@ -24,6 +24,7 @@ export const POST = route(async (req: NextRequest) => {
     purpose: form.get("purpose") ?? undefined,
     upi: form.get("upi") ?? undefined,
     dueDate: form.get("dueDate"),
+    isPrivate: form.get("isPrivate") === "true",
   });
 
   const fileEntry = form.get("file");

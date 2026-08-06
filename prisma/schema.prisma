@@ -129,6 +129,7 @@ model Payment {
   amount        BigInt // integer paise
   payee         String
   payFrom       String     // name of a PayAccount (the source to pay from)
+  isPrivate     Boolean    @default(false) // private approver<->payer payment
   purpose       String     @db.Text
   upi           String?
   status        Status    @default(REQUESTED)
@@ -199,6 +200,7 @@ model PayAccount {
   id        String   @id @default(cuid())
   name      String   @unique
   active    Boolean  @default(true)
+  sortOrder Int      @default(0) // display priority (lower = higher up)
   createdAt DateTime @default(now())
 }
 

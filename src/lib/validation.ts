@@ -14,6 +14,7 @@ export const createPaymentSchema = z.object({
   purpose: z.string().trim().max(500).optional().default(""),
   upi: z.string().trim().max(120).optional().default(""),
   dueDate: z.coerce.date(),
+  isPrivate: z.boolean().optional().default(false),
 });
 export type CreatePaymentInput = z.infer<typeof createPaymentSchema>;
 

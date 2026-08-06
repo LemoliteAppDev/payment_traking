@@ -36,6 +36,8 @@ export interface Card {
   scheduledFor: string | null;
   createdAt: string;
   editedAt: string | null;
+  paidAt: string | null;
+  isPrivate: boolean;
   mine: boolean;
   requestedBy: UserLite;
   hasProof: boolean;
@@ -146,6 +148,8 @@ export const api = {
     req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }),
   payAccountDelete: (id: string) =>
     req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "DELETE" }),
+  payAccountMove: (id: string, move: "up" | "down") =>
+    req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ move }) }),
   // standalone secure OTP channel (approver <-> payer)
   otpList: () => req<{ messages: OtpMsg[] }>(`/api/v1/otp`),
   otpSend: (message: string) =>
@@ -212,20 +216,19 @@ export const fmtShort = (dateISO: string): string =>
   new Date(dateISO).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 
 /**
- * Urgency sort key: smaller = more urgent, shown higher.
- *  - Overdue  → negative (the more overdue, the smaller / higher up)
- *  - Due today → 0
- *  - Upcoming → positive (days until due)
- *  - Paid / Done / Cancelled → +Infinity (drop to the bottom)
- * Ties are broken by newest-first at the call site.
+ * List sort key: [tier, dueDays]. Lower tier shows first.
+ *  0 = due today · 1 = other active (ordered by due date) · 2 = waiting for approval · 3 = paid/done
+ * Within tier 1 sort by dueDays asc; elsewhere newest-first (handled at the call site).
  */
-export function dueRank(p: { status: Status; dueDate: string }): number {
-  if (p.status === "PAID" || p.status === "CONFIRMED" || p.status === "CANCELLED") return Number.POSITIVE_INFINITY;
+export function listSortKey(p: { status: Status; dueDate: string }): [number, number] {
+  if (p.status === "PAID" || p.status === "CONFIRMED" || p.status === "CANCELLED") return [3, 0];
+  if (p.status === "AWAITING_APPROVAL" || p.status === "RETURNED") return [2, 0];
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const due = new Date(p.dueDate);
   due.setHours(0, 0, 0, 0);
-  return Math.round((due.getTime() - today.getTime()) / DAY);
+  const days = Math.round((due.getTime() - today.getTime()) / DAY);
+  return days === 0 ? [0, 0] : [1, days];
 }
 
 export function isoDay(offset = 0): string {

@@ -50,6 +50,7 @@ export function serializePayment(p: FullPayment) {
     amount: p.amount, // paise (BigInt -> string at serialization)
     payee: p.payee,
     payFrom: p.payFrom,
+    isPrivate: p.isPrivate,
     purpose: p.purpose,
     upi: p.upi,
     status: p.status,
@@ -235,7 +236,9 @@ async function notifyForTransition(to: Status, p: FullPayment): Promise<void> {
       url: "/", tag,
     });
   } else if (to === "PAID") {
+    // Payment done — tell the raiser (to confirm) and the approver(s) it's paid.
     await sendPushToUser(p.requestedById, { title: "Paid — please confirm", body: `${amt} to ${p.payee} is paid. Tap to confirm you received it.`, url: "/", tag });
+    await sendPushToApprovers({ title: "Payment done", body: `${amt} to ${p.payee} has been paid.`, url: "/", tag });
   } else if (to === "CONFIRMED") {
     if (p.paidById) await sendPushToUser(p.paidById, { title: "Receipt confirmed", body: `${p.requestedBy.name} confirmed ${amt} to ${p.payee}.`, url: "/", tag });
   }
@@ -253,6 +256,7 @@ export interface CreateInput {
   purpose: string;
   upi: string;
   dueDate: Date;
+  isPrivate?: boolean;
 }
 
 export async function createPayment(
@@ -263,14 +267,18 @@ export async function createPayment(
   if (!(await isActiveAccount(input.payFrom))) {
     throw new ApiError(400, "INVALID_ACCOUNT", "Choose a valid pay-from account.");
   }
-  // Users' requests go to the approver first; admins' requests go to the payer.
-  const needsApproval = !actor.isAdmin;
+  // Private payments are only between the approver and payer — honoured only for
+  // them, and they skip the approval queue (straight to the payer).
+  const isPrivate = !!input.isPrivate && (!!actor.isApprover || !!actor.isPayer);
+  // Users' requests go to the approver first; admins'/private ones go to the payer.
+  const needsApproval = !actor.isAdmin && !isPrivate;
   const created = await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.create({
       data: {
         amount: input.amount,
         payee: input.payee,
         payFrom: input.payFrom,
+        isPrivate,
         purpose: input.purpose,
         upi: input.upi || null,
         dueDate: input.dueDate,
@@ -371,6 +379,10 @@ export async function deletePayment(paymentId: string, actor: SessionUser): Prom
     include: { attachments: true },
   });
   if (!payment) throw new ApiError(404, "NOT_FOUND", "Payment not found.");
+  // Private payments are only for the approver/payer — hide from everyone else.
+  if (payment.isPrivate && !actor.isApprover && !actor.isPayer) {
+    throw new ApiError(404, "NOT_FOUND", "Payment not found.");
+  }
   if (payment.requestedById !== actor.id && !actor.isAdmin) {
     throw new ApiError(403, "FORBIDDEN", "You can't delete this payment.");
   }
@@ -429,21 +441,30 @@ export async function postNote(paymentId: string, actor: SessionUser, message: s
 }
 
 // ── List with server-side filter + search ────────────────────────────
-// Urgency key: overdue < due-today < upcoming < paid/done (see dueRank in client.ts).
+// Sort key [tier, dueDays]: 0 today · 1 by-due · 2 awaiting approval · 3 paid/done.
 const DAY_MS = 86400000;
-function dueRankOf(p: { status: string; dueDate: Date }): number {
-  if (p.status === "PAID" || p.status === "CONFIRMED" || p.status === "CANCELLED") return Number.POSITIVE_INFINITY;
+function sortKeyOf(p: { status: string; dueDate: Date }): [number, number] {
+  if (p.status === "PAID" || p.status === "CONFIRMED" || p.status === "CANCELLED") return [3, 0];
+  if (p.status === "AWAITING_APPROVAL" || p.status === "RETURNED") return [2, 0];
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const due = new Date(p.dueDate);
   due.setHours(0, 0, 0, 0);
-  return Math.round((due.getTime() - today.getTime()) / DAY_MS);
+  const days = Math.round((due.getTime() - today.getTime()) / DAY_MS);
+  return days === 0 ? [0, 0] : [1, days];
 }
 
 export async function listPayments(actor: SessionUser, filter: string, q: string) {
-  // Visibility: admins see everything; users see only what they raised.
+  // Visibility: private payments are for the approver/payer only. Otherwise
+  // admins see everything and users see only what they raised.
+  const canSeePrivate = !!actor.isApprover || !!actor.isPayer;
+  const where: Prisma.PaymentWhereInput = canSeePrivate
+    ? {}
+    : actor.isAdmin
+      ? { isPrivate: false }
+      : { requestedById: actor.id, isPrivate: false };
   const all = await prisma.payment.findMany({
-    where: actor.isAdmin ? {} : { requestedById: actor.id },
+    where,
     include: { requestedBy: true, attachments: true },
     orderBy: { createdAt: "desc" },
   });
@@ -462,10 +483,12 @@ export async function listPayments(actor: SessionUser, filter: string, q: string
       }
       return true;
     })
-    // Urgent on top (overdue → due today → upcoming → paid/done), newest-first within each.
+    // Today → by due date → awaiting approval → paid/done. Paid tab: last paid first.
     .sort((a, b) => {
-      const ua = dueRankOf(a), ub = dueRankOf(b);
-      if (ua !== ub) return ua - ub;
+      if (filter === "paid") return (b.paidAt?.getTime() ?? b.createdAt.getTime()) - (a.paidAt?.getTime() ?? a.createdAt.getTime());
+      const [ta, da] = sortKeyOf(a), [tb, db] = sortKeyOf(b);
+      if (ta !== tb) return ta - tb;
+      if (ta === 1 && da !== db) return da - db;
       return b.createdAt.getTime() - a.createdAt.getTime();
     });
 
@@ -482,6 +505,8 @@ export async function listPayments(actor: SessionUser, filter: string, q: string
     scheduledFor: p.scheduledFor,
     createdAt: p.createdAt,
     editedAt: p.editedAt,
+    paidAt: p.paidAt,
+    isPrivate: p.isPrivate,
     mine: p.requestedById === actor.id,
     requestedBy: { id: p.requestedBy.id, name: p.requestedBy.name, role: p.requestedBy.role },
     hasProof: p.attachments.some((a) => a.kind === "PROOF"),

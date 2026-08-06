@@ -302,8 +302,20 @@ a{color:inherit}
 .acctbadge{flex:none;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);background:var(--line-2);padding:2px 7px;border-radius:999px}
 .acctacts{display:flex;align-items:center;gap:6px;flex:none}
 .acctic{width:31px;height:31px;flex:none;border-radius:8px;display:grid;place-items:center;font-size:13px;color:var(--ink-3);background:var(--surface);border:1px solid var(--line);transition:.12s}
-.acctic:hover{background:var(--surface-2);color:var(--ink)}
+.acctic:hover:not(:disabled){background:var(--surface-2);color:var(--ink)}
 .acctic.del:hover{background:var(--over-soft);border-color:#F1C7C7}
+.acctmove{display:flex;flex-direction:column;gap:2px}
+.acctic.mv{width:22px;height:14px;font-size:8px;border-radius:5px}
+.acctic.mv:disabled{opacity:.3;cursor:default}
+/* private-payment toggle + badge */
+.privtag{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;color:var(--hold);background:var(--hold-soft);padding:2px 8px;border-radius:999px}
+.privtoggle{display:flex;align-items:flex-start;gap:11px;width:100%;text-align:left;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2);margin-top:4px;transition:.12s;cursor:pointer}
+.privtoggle.on{border-color:var(--hold);background:var(--hold-soft)}
+.privcheck{width:22px;height:22px;flex:none;border-radius:6px;border:1.5px solid var(--line);display:grid;place-items:center;font-size:13px;color:#fff;background:#fff}
+.privtoggle.on .privcheck{background:var(--hold);border-color:var(--hold)}
+.privtxt{display:flex;flex-direction:column;gap:2px}
+.privtxt b{font-size:13.5px;color:var(--ink)}
+.privtxt small{font-size:11.5px;color:var(--ink-3);line-height:1.35}
 .acctrow.editing{gap:8px}
 .acctedit{flex:1;min-width:0;font-family:inherit;font-size:14px;padding:8px 11px;border:1px solid var(--brand);border-radius:9px;background:#fff;color:var(--ink);box-shadow:0 0 0 3px var(--brand-soft)}
 .acctbtn{flex:none;font-size:12.5px;font-weight:600;color:var(--ink-3);background:var(--surface);border:1px solid var(--line);padding:6px 14px;border-radius:8px;transition:.12s}

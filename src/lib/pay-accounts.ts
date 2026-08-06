@@ -14,7 +14,7 @@ export interface PayAccountLite {
 export async function listPayAccounts(includeInactive = false): Promise<PayAccountLite[]> {
   const rows = await prisma.payAccount.findMany({
     where: includeInactive ? {} : { active: true },
-    orderBy: { name: "asc" },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
   });
   return rows.map((a) => ({ id: a.id, name: a.name, active: a.active }));
 }
@@ -38,8 +38,22 @@ export async function createPayAccount(name: string, actor: SessionUser): Promis
     }
     throw new ApiError(409, "DUPLICATE", "That account already exists.");
   }
-  const created = await prisma.payAccount.create({ data: { name: trimmed } });
+  const last = await prisma.payAccount.findFirst({ orderBy: { sortOrder: "desc" }, select: { sortOrder: true } });
+  const created = await prisma.payAccount.create({ data: { name: trimmed, sortOrder: (last?.sortOrder ?? 0) + 1 } });
   return { id: created.id, name: created.name, active: created.active };
+}
+
+/** Move an account up or down in the priority order (swap with its neighbour). */
+export async function movePayAccount(id: string, dir: "up" | "down", actor: SessionUser): Promise<void> {
+  if (!actor.isAdmin) throw new ApiError(403, "FORBIDDEN", "Only an admin can reorder the pay-from list.");
+  const all = await prisma.payAccount.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] });
+  const idx = all.findIndex((a) => a.id === id);
+  if (idx === -1) throw new ApiError(404, "NOT_FOUND", "Account not found.");
+  const swapWith = dir === "up" ? idx - 1 : idx + 1;
+  if (swapWith < 0 || swapWith >= all.length) return; // already at the end
+  [all[idx], all[swapWith]] = [all[swapWith], all[idx]];
+  // Reassign sequential order so it's stable even if two rows shared a value.
+  await prisma.$transaction(all.map((a, i) => prisma.payAccount.update({ where: { id: a.id }, data: { sortOrder: i } })));
 }
 
 export async function setPayAccountActive(id: string, active: boolean, actor: SessionUser): Promise<void> {

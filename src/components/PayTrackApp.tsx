@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, isoDay, timeAgo, dueRank,
+  api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, isoDay, timeAgo, listSortKey,
   type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem, type OtpMsg, type PayAccountLite,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
@@ -24,7 +24,7 @@ const ImageViewerCtx = createContext<(src: string, name: string) => void>(() => 
 
 export function PayTrackApp() {
   const qc = useQueryClient();
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("requested"); // default to the Waiting tab
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; err?: boolean } | null>(null);
@@ -163,10 +163,12 @@ export function PayTrackApp() {
         if (filter === "requested") return isWaiting(p.effective);
         return true;
       })
-      // Urgent on top (overdue → due today → upcoming → paid/done), newest-first within each.
+      // Today → by due date → waiting-for-approval → paid/done. In the Paid tab, last paid first.
       .sort((a, b) => {
-        const ua = dueRank(a), ub = dueRank(b);
-        if (ua !== ub) return ua - ub;
+        if (filter === "paid") return +new Date(b.paidAt ?? b.createdAt) - +new Date(a.paidAt ?? a.createdAt);
+        const [ta, da] = listSortKey(a), [tb, db] = listSortKey(b);
+        if (ta !== tb) return ta - tb;
+        if (ta === 1 && da !== db) return da - db;
         return +new Date(b.createdAt) - +new Date(a.createdAt);
       });
   }, [all, filter, search]);
@@ -247,8 +249,8 @@ export function PayTrackApp() {
             </div>
           </div>
 
-          {newOpen && <NewSheet onClose={() => setNewOpen(false)} onSubmit={(f) => mCreate.mutate(f)} busy={mCreate.isPending} onError={(m) => showToast(m, true)} />}
-          {editFor && <NewSheet initial={editFor} onClose={() => setEditFor(null)} onSubmit={(f) => mEdit.mutate({ id: editFor.id, form: f })} busy={mEdit.isPending} onError={(m) => showToast(m, true)} />}
+          {newOpen && <NewSheet onClose={() => setNewOpen(false)} onSubmit={(f) => mCreate.mutate(f)} busy={mCreate.isPending} onError={(m) => showToast(m, true)} canPrivate={isApprover || isPayer} />}
+          {editFor && <NewSheet initial={editFor} onClose={() => setEditFor(null)} onSubmit={(f) => mEdit.mutate({ id: editFor.id, form: f })} busy={mEdit.isPending} onError={(m) => showToast(m, true)} canPrivate={false} />}
           {schedFor && <ScheduleSheet onClose={() => setSchedFor(null)} onSubmit={(date) => mSchedule.mutate({ id: schedFor, date })} busy={mSchedule.isPending} />}
           {paidFor && <PaidSheet onClose={() => setPaidFor(null)} onSubmit={(f) => mPay.mutate({ id: paidFor, form: f })} busy={mPay.isPending} onError={(m) => showToast(m, true)} />}
           {rejectFor && <RejectSheet onClose={() => setRejectFor(null)} onSubmit={(reason) => mReject.mutate({ id: rejectFor, reason })} busy={mReject.isPending} />}
@@ -658,7 +660,7 @@ function PaymentCard({ p, selected, onClick }: { p: Card; selected: boolean; onC
       <div className="av" style={{ background: colorFor(p.requestedBy.name) }}>{initials(p.payee)}</div>
       <div className="mid">
         <div className="row1"><span className="payee">{p.payee}</span><span className="amt grotesk">{fmtPaise(p.amount)}</span></div>
-        <div className="row2"><StatusPill eff={p.effective} />{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}</div>
+        <div className="row2"><StatusPill eff={p.effective} />{p.isPrivate && <span className="privtag">🔒 Private</span>}{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}</div>
         <div className="meta">{p.purpose}</div>
         <div className="submeta">from <b>{p.payFrom}</b> · {p.mine ? "you asked" : "by " + p.requestedBy.name}</div>
         <div className="cstamp">🕒 {fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${fmtStamp(p.editedAt)}` : ""}</div>
@@ -701,7 +703,7 @@ function PaymentDetail(props: { detail: Detail | null; me: MeUser | null; loadin
           <h2>{p.payee}</h2>
           <div className="sub">{p.purpose} · {mine ? "you asked" : "asked by " + p.requestedBy.name}</div>
           <div style={{ marginTop: 7, display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
-            <StatusPill eff={eff} />{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}
+            <StatusPill eff={eff} />{p.isPrivate && <span className="privtag">🔒 Private</span>}{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}
           </div>
           <div className="tstamp">🕒 Raised {fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${fmtStamp(p.editedAt)}` : ""}</div>
         </div>
@@ -981,11 +983,12 @@ function PayFromField({ value, onChange }: { value: string; onChange: (v: string
   );
 }
 
-function NewSheet({ onClose, onSubmit, busy, onError, initial }: { onClose: () => void; onSubmit: (f: FormData) => void; busy: boolean; onError: (m: string) => void; initial?: Detail }) {
+function NewSheet({ onClose, onSubmit, busy, onError, initial, canPrivate }: { onClose: () => void; onSubmit: (f: FormData) => void; busy: boolean; onError: (m: string) => void; initial?: Detail; canPrivate: boolean }) {
   const editing = !!initial;
   const [amt, setAmt] = useState(initial ? (Number(initial.amount) / 100).toLocaleString("en-IN") : "");
   const [payee, setPayee] = useState(initial?.payee ?? "");
   const [payFrom, setPayFrom] = useState(initial?.payFrom ?? "");
+  const [isPrivate, setIsPrivate] = useState(false);
   const [purpose, setPurpose] = useState(initial?.purpose ?? "");
   const [upi, setUpi] = useState(initial?.upi ?? "");
   const [due, setDue] = useState(initial ? initial.dueDate.slice(0, 10) : isoDay(2));
@@ -1005,6 +1008,7 @@ function NewSheet({ onClose, onSubmit, busy, onError, initial }: { onClose: () =
     f.set("purpose", purpose.trim());
     f.set("upi", upi.trim());
     f.set("dueDate", due);
+    if (canPrivate && isPrivate) f.set("isPrivate", "true");
     if (file) f.set("file", file);
     onSubmit(f);
   }
@@ -1023,6 +1027,12 @@ function NewSheet({ onClose, onSubmit, busy, onError, initial }: { onClose: () =
       </div>
       <div className="fld"><label>Pay who?</label><input placeholder="Shop or person name" value={payee} onChange={(e) => setPayee(e.target.value)} /></div>
       <div className="fld"><label>What is this for?</label><input placeholder="e.g. Diwali advert pictures" value={purpose} onChange={(e) => setPurpose(e.target.value)} /></div>
+      {canPrivate && !editing && (
+        <button type="button" className={`privtoggle ${isPrivate ? "on" : ""}`} onClick={() => setIsPrivate((v) => !v)}>
+          <span className="privcheck">{isPrivate ? "✓" : ""}</span>
+          <span className="privtxt"><b>🔒 Private payment</b><small>Only the approver and payer can see it — hidden from everyone else.</small></span>
+        </button>
+      )}
       <div className="fld">
         <label>Add a photo or bill</label>
         <div className="drop" onClick={() => fileRef.current?.click()}><IcUpload /><div>Tap to add a bill, screenshot, or PDF — or paste (Ctrl/⌘+V)</div></div>
@@ -1094,7 +1104,7 @@ function RejectSheet({ onClose, onSubmit, busy }: { onClose: () => void; onSubmi
 }
 
 /* Pay-from accounts manager (any admin). Add a new source or hide/show one. */
-function AccountRow({ a, onToast }: { a: PayAccountLite; onToast: (m: string, err?: boolean) => void }) {
+function AccountRow({ a, first, last, onToast }: { a: PayAccountLite; first: boolean; last: boolean; onToast: (m: string, err?: boolean) => void }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(a.name);
@@ -1102,6 +1112,7 @@ function AccountRow({ a, onToast }: { a: PayAccountLite; onToast: (m: string, er
   const mRename = useMutation({ mutationFn: (name: string) => api.payAccountRename(a.id, name), onSuccess: () => { inval(); setEditing(false); onToast("Account renamed"); }, onError: (e: Error) => onToast(e.message, true) });
   const mActive = useMutation({ mutationFn: (active: boolean) => api.payAccountSetActive(a.id, active), onSuccess: inval, onError: (e: Error) => onToast(e.message, true) });
   const mDelete = useMutation({ mutationFn: () => api.payAccountDelete(a.id), onSuccess: () => { inval(); onToast("Account deleted"); }, onError: (e: Error) => onToast(e.message, true) });
+  const mMove = useMutation({ mutationFn: (dir: "up" | "down") => api.payAccountMove(a.id, dir), onSuccess: inval, onError: (e: Error) => onToast(e.message, true) });
 
   if (editing) {
     return (
@@ -1120,6 +1131,10 @@ function AccountRow({ a, onToast }: { a: PayAccountLite; onToast: (m: string, er
       </span>
       <span className="acctname">{a.name}{!a.active && <span className="acctbadge">Hidden</span>}</span>
       <div className="acctacts">
+        <div className="acctmove">
+          <button className="acctic mv" title="Move up" disabled={first || mMove.isPending} onClick={() => mMove.mutate("up")}>▲</button>
+          <button className="acctic mv" title="Move down" disabled={last || mMove.isPending} onClick={() => mMove.mutate("down")}>▼</button>
+        </div>
         <button className="acctic" title="Rename" onClick={() => { setVal(a.name); setEditing(true); }}>✏️</button>
         <button className={`acctbtn ${a.active ? "" : "on"}`} onClick={() => mActive.mutate(!a.active)}>{a.active ? "Hide" : "Show"}</button>
         <button className="acctic del" title="Delete permanently" onClick={() => { if (window.confirm(`Delete "${a.name}" from the list? Existing payments keep their label.`)) mDelete.mutate(); }}>🗑</button>
@@ -1147,7 +1162,7 @@ function AccountsManager({ onToast }: { onToast: (m: string, err?: boolean) => v
         <button className="btn btn-primary sm" disabled={!canAdd} onClick={() => mAdd.mutate(name.trim())}>{mAdd.isPending ? "Adding…" : "Add"}</button>
       </div>
       <div className="acctlist">
-        {accounts.map((a) => <AccountRow key={a.id} a={a} onToast={onToast} />)}
+        {accounts.map((a, i) => <AccountRow key={a.id} a={a} first={i === 0} last={i === accounts.length - 1} onToast={onToast} />)}
         {accounts.length === 0 && <div className="acctempty">No accounts yet — add your first one above.</div>}
       </div>
     </div>

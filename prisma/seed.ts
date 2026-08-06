@@ -48,9 +48,10 @@ async function main() {
     users[u.name] = rec.id;
   }
 
-  // Pay-from accounts (the "Pay from" list). Admins can add more in-app.
-  for (const name of ["Peliswan", "Lemolite", "Shivam", "Zenith"]) {
-    await prisma.payAccount.upsert({ where: { name }, update: {}, create: { name } });
+  // Pay-from accounts (the "Pay from" list) in priority order. Admins reorder in-app.
+  const seedAccounts: [string, number][] = [["Shivam", 1], ["Peliswan", 2], ["Zenith", 4], ["Lemolite", 5]];
+  for (const [name, sortOrder] of seedAccounts) {
+    await prisma.payAccount.upsert({ where: { name }, update: {}, create: { name, sortOrder } });
   }
 
   // Demo payments — only when SEED_DEMO=1 (never in real/production seeding).
