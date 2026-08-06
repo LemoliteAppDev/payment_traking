@@ -53,15 +53,14 @@ export function PayTrackApp() {
   const isManager = me?.isManager ?? false;
   const isAdmin = me?.isAdmin ?? false;
 
-  // When the acting user changes (e.g. after login), default the filter by role
-  // — payer sees everything, requesters land on their own — reset the selection,
-  // and drop any query cache left over from the previous user.
+  // When the acting user changes (e.g. after login), land everyone on the Waiting
+  // tab, reset the selection, and drop any query cache from the previous user.
   const lastUserId = useRef<string | null>(null);
   useEffect(() => {
     if (me && me.id !== lastUserId.current) {
       const switched = lastUserId.current !== null;
       lastUserId.current = me.id;
-      setFilter(me.role === "ADMIN" ? "all" : "mine");
+      setFilter("requested");
       setSelected(null);
       if (switched) qc.invalidateQueries();
     }
