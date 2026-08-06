@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, isoDay, timeAgo, listSortKey,
-  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem, type OtpMsg, type PayAccountLite,
+  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem, type OtpMsg, type PayAccountLite, type PrivateMemberLite,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
 import { enablePush, isPushEnabled, pushSupported, pushBlocked } from "@/lib/push-client";
@@ -248,8 +248,8 @@ export function PayTrackApp() {
             </div>
           </div>
 
-          {newOpen && <NewSheet onClose={() => setNewOpen(false)} onSubmit={(f) => mCreate.mutate(f)} busy={mCreate.isPending} onError={(m) => showToast(m, true)} canPrivate={isApprover || isPayer} />}
-          {editFor && <NewSheet initial={editFor} onClose={() => setEditFor(null)} onSubmit={(f) => mEdit.mutate({ id: editFor.id, form: f })} busy={mEdit.isPending} onError={(m) => showToast(m, true)} canPrivate={false} />}
+          {newOpen && <NewSheet onClose={() => setNewOpen(false)} onSubmit={(f) => mCreate.mutate(f)} busy={mCreate.isPending} onError={(m) => showToast(m, true)} canUseIndividuals={isApprover || isPayer} />}
+          {editFor && <NewSheet initial={editFor} onClose={() => setEditFor(null)} onSubmit={(f) => mEdit.mutate({ id: editFor.id, form: f })} busy={mEdit.isPending} onError={(m) => showToast(m, true)} canUseIndividuals={isApprover || isPayer} />}
           {schedFor && <ScheduleSheet onClose={() => setSchedFor(null)} onSubmit={(date) => mSchedule.mutate({ id: schedFor, date })} busy={mSchedule.isPending} />}
           {paidFor && <PaidSheet onClose={() => setPaidFor(null)} onSubmit={(f) => mPay.mutate({ id: paidFor, form: f })} busy={mPay.isPending} onError={(m) => showToast(m, true)} />}
           {rejectFor && <RejectSheet onClose={() => setRejectFor(null)} onSubmit={(reason) => mReject.mutate({ id: rejectFor, reason })} busy={mReject.isPending} />}
@@ -659,7 +659,7 @@ function PaymentCard({ p, selected, onClick }: { p: Card; selected: boolean; onC
       <div className="av" style={{ background: colorFor(p.requestedBy.name) }}>{initials(p.payee)}</div>
       <div className="mid">
         <div className="row1"><span className="payee">{p.payee}</span><span className="amt grotesk">{fmtPaise(p.amount)}</span></div>
-        <div className="row2"><StatusPill eff={p.effective} />{p.isPrivate && <span className="privtag">🔒 Private</span>}{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}</div>
+        <div className="row2"><StatusPill eff={p.effective} />{p.payFromType === "INDIVIDUAL" && <span className="sourcetag">Individual</span>}{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}</div>
         <div className="meta">{p.purpose}</div>
         <div className="submeta">from <b>{p.payFrom}</b> · {p.mine ? "you asked" : "by " + p.requestedBy.name}</div>
         <div className="cstamp">🕒 {fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${fmtStamp(p.editedAt)}` : ""}</div>
@@ -702,14 +702,14 @@ function PaymentDetail(props: { detail: Detail | null; me: MeUser | null; loadin
           <h2>{p.payee}</h2>
           <div className="sub">{p.purpose} · {mine ? "you asked" : "asked by " + p.requestedBy.name}</div>
           <div style={{ marginTop: 7, display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
-            <StatusPill eff={eff} />{p.isPrivate && <span className="privtag">🔒 Private</span>}{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}
+            <StatusPill eff={eff} />{p.payFromType === "INDIVIDUAL" && <span className="sourcetag">Individual</span>}{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}
           </div>
           <div className="tstamp">🕒 Raised {fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${fmtStamp(p.editedAt)}` : ""}</div>
         </div>
         <div className="amt grotesk">{fmtPaise(p.amount)}<small>from {p.payFrom}</small></div>
       </div>
       <div className="frow">
-        <div className="cell"><div className="k">Pay from</div><div className="v">{p.payFrom}</div></div>
+        <div className="cell"><div className="k">{p.payFromType === "INDIVIDUAL" ? "Individual" : "Pay from"}</div><div className="v">{p.payFrom}</div></div>
         <div className="cell"><div className="k">Pay to</div><div className="v">{p.upi || p.payee}</div></div>
         <div className="cell"><div className="k">Amount</div><div className="v">{fmtPaise(p.amount)}</div></div>
       </div>
@@ -958,36 +958,68 @@ function Sheet({ title, children, foot, onClose }: { title: string; children: Re
   );
 }
 
-/* "Pay from" picker — a plain dropdown of the active accounts. Admins add /
-   hide accounts in the Team panel, not here. */
-function PayFromField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+type PaymentSourceType = "ACCOUNT" | "INDIVIDUAL";
+
+/* Source picker — accounts for everyone, individual members for Jagat/payer. */
+function PayFromField({
+  value,
+  sourceType,
+  onValueChange,
+  onTypeChange,
+  canUseIndividuals,
+}: {
+  value: string;
+  sourceType: PaymentSourceType;
+  onValueChange: (v: string) => void;
+  onTypeChange: (v: PaymentSourceType) => void;
+  canUseIndividuals: boolean;
+}) {
   const accountsQ = useQuery({ queryKey: ["payAccounts"], queryFn: api.payAccounts });
-  const active = useMemo(() => (accountsQ.data?.accounts ?? []).filter((a) => a.active), [accountsQ.data]);
+  const membersQ = useQuery({ queryKey: ["privateMembers"], queryFn: api.privateMembers, enabled: canUseIndividuals });
+  const activeAccounts = useMemo(() => (accountsQ.data?.accounts ?? []).filter((a) => a.active), [accountsQ.data]);
+  const activeMembers = useMemo(() => (membersQ.data?.members ?? []).filter((m) => m.active), [membersQ.data]);
+  const active = sourceType === "INDIVIDUAL" ? activeMembers : activeAccounts;
   // Keep the current value selectable even if it's inactive/unknown (e.g. editing an old entry).
   const options = value && !active.some((a) => a.name === value) ? [value, ...active.map((a) => a.name)] : active.map((a) => a.name);
 
-  // Default to the first account once the list loads and nothing is chosen yet.
+  // Default to the first source once the list loads and nothing is chosen yet.
   useEffect(() => {
-    if (!value && active.length) onChange(active[0].name);
-  }, [value, active, onChange]);
+    if (!value && active.length) onValueChange(active[0].name);
+  }, [value, active, onValueChange]);
+
+  function onChange(next: string) {
+    onValueChange(next);
+  }
+
+  function switchType(next: PaymentSourceType) {
+    onTypeChange(next);
+    const nextList = next === "INDIVIDUAL" ? activeMembers : activeAccounts;
+    onValueChange(nextList[0]?.name ?? "");
+  }
 
   return (
     <div className="fld">
-      <label>Pay from</label>
+      <label>{sourceType === "INDIVIDUAL" ? "Individual" : "Pay from"}</label>
+      {canUseIndividuals && (
+        <div className="srcswitch">
+          <button type="button" className={sourceType === "ACCOUNT" ? "on" : ""} onClick={() => switchType("ACCOUNT")}>Pay-from account</button>
+          <button type="button" className={sourceType === "INDIVIDUAL" ? "on" : ""} onClick={() => switchType("INDIVIDUAL")}>Individual</button>
+        </div>
+      )}
       <select value={value} onChange={(e) => onChange(e.target.value)}>
-        {options.length === 0 && <option value="">No accounts yet</option>}
+        {options.length === 0 && <option value="">{sourceType === "INDIVIDUAL" ? "No individuals yet" : "No accounts yet"}</option>}
         {options.map((n) => <option key={n} value={n}>{n}</option>)}
       </select>
     </div>
   );
 }
 
-function NewSheet({ onClose, onSubmit, busy, onError, initial, canPrivate }: { onClose: () => void; onSubmit: (f: FormData) => void; busy: boolean; onError: (m: string) => void; initial?: Detail; canPrivate: boolean }) {
+function NewSheet({ onClose, onSubmit, busy, onError, initial, canUseIndividuals }: { onClose: () => void; onSubmit: (f: FormData) => void; busy: boolean; onError: (m: string) => void; initial?: Detail; canUseIndividuals: boolean }) {
   const editing = !!initial;
   const [amt, setAmt] = useState(initial ? (Number(initial.amount) / 100).toLocaleString("en-IN") : "");
   const [payee, setPayee] = useState(initial?.payee ?? "");
   const [payFrom, setPayFrom] = useState(initial?.payFrom ?? "");
-  const [isPrivate, setIsPrivate] = useState(false);
+  const [payFromType, setPayFromType] = useState<PaymentSourceType>(initial?.payFromType ?? "ACCOUNT");
   const [purpose, setPurpose] = useState(initial?.purpose ?? "");
   const [upi, setUpi] = useState(initial?.upi ?? "");
   const [due, setDue] = useState(initial ? initial.dueDate.slice(0, 10) : isoDay(2));
@@ -999,15 +1031,15 @@ function NewSheet({ onClose, onSubmit, busy, onError, initial, canPrivate }: { o
 
   function submit() {
     if (!rupees || !payee.trim()) { onError("Please fill in how much and who to pay"); return; }
-    if (!payFrom.trim()) { onError("Please choose a pay-from account"); return; }
+    if (!payFrom.trim()) { onError(payFromType === "INDIVIDUAL" ? "Please choose an individual" : "Please choose a pay-from account"); return; }
     const f = new FormData();
     f.set("amount", String(rupees * 100)); // rupees -> paise
     f.set("payee", payee.trim());
     f.set("payFrom", payFrom.trim());
+    f.set("payFromType", payFromType);
     f.set("purpose", purpose.trim());
     f.set("upi", upi.trim());
     f.set("dueDate", due);
-    if (canPrivate && isPrivate) f.set("isPrivate", "true");
     if (file) f.set("file", file);
     onSubmit(f);
   }
@@ -1021,17 +1053,11 @@ function NewSheet({ onClose, onSubmit, busy, onError, initial, canPrivate }: { o
       </div>
       <div className="amtwords">{words}</div>
       <div className="two">
-        <PayFromField value={payFrom} onChange={setPayFrom} />
+        <PayFromField value={payFrom} sourceType={payFromType} onValueChange={setPayFrom} onTypeChange={setPayFromType} canUseIndividuals={canUseIndividuals} />
         <div className="fld"><label>Their UPI or bank <span style={{ color: "var(--ink-3)", fontWeight: 500 }}>(optional)</span></label><input placeholder="name@upi" value={upi} onChange={(e) => setUpi(e.target.value)} /></div>
       </div>
       <div className="fld"><label>Pay who?</label><input placeholder="Shop or person name" value={payee} onChange={(e) => setPayee(e.target.value)} /></div>
       <div className="fld"><label>What is this for?</label><input placeholder="e.g. Diwali advert pictures" value={purpose} onChange={(e) => setPurpose(e.target.value)} /></div>
-      {canPrivate && !editing && (
-        <button type="button" className={`privtoggle ${isPrivate ? "on" : ""}`} onClick={() => setIsPrivate((v) => !v)}>
-          <span className="privcheck">{isPrivate ? "✓" : ""}</span>
-          <span className="privtxt"><b>🔒 Private payment</b><small>Only the approver and payer can see it — hidden from everyone else.</small></span>
-        </button>
-      )}
       <div className="fld">
         <label>Add a photo or bill</label>
         <div className="drop" onClick={() => fileRef.current?.click()}><IcUpload /><div>Tap to add a bill, screenshot, or PDF — or paste (Ctrl/⌘+V)</div></div>
@@ -1168,13 +1194,79 @@ function AccountsManager({ onToast }: { onToast: (m: string, err?: boolean) => v
   );
 }
 
-/* Team + pay-from accounts. Users: managers only. Accounts: any admin. */
+function MemberRow({ m, first, last, onToast }: { m: PrivateMemberLite; first: boolean; last: boolean; onToast: (msg: string, err?: boolean) => void }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(m.name);
+  const inval = () => { qc.invalidateQueries({ queryKey: ["privateMembers"] }); qc.invalidateQueries({ queryKey: ["payments"] }); };
+  const mRename = useMutation({ mutationFn: (name: string) => api.privateMemberRename(m.id, name), onSuccess: () => { inval(); setEditing(false); onToast("Member renamed"); }, onError: (e: Error) => onToast(e.message, true) });
+  const mActive = useMutation({ mutationFn: (active: boolean) => api.privateMemberSetActive(m.id, active), onSuccess: inval, onError: (e: Error) => onToast(e.message, true) });
+  const mDelete = useMutation({ mutationFn: () => api.privateMemberDelete(m.id), onSuccess: () => { inval(); onToast("Member deleted"); }, onError: (e: Error) => onToast(e.message, true) });
+  const mMove = useMutation({ mutationFn: (dir: "up" | "down") => api.privateMemberMove(m.id, dir), onSuccess: inval, onError: (e: Error) => onToast(e.message, true) });
+
+  if (editing) {
+    return (
+      <div className="acctrow editing">
+        <input className="acctedit" autoFocus value={val} onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && val.trim()) mRename.mutate(val.trim()); if (e.key === "Escape") { setEditing(false); setVal(m.name); } }} />
+        <button className="acctbtn on" disabled={!val.trim() || mRename.isPending} onClick={() => mRename.mutate(val.trim())}>Save</button>
+        <button className="acctbtn" onClick={() => { setEditing(false); setVal(m.name); }}>Cancel</button>
+      </div>
+    );
+  }
+  return (
+    <div className={`acctrow ${m.active ? "" : "off"}`}>
+      <span className="acctico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="3.5" /><path d="M5 20a7 7 0 0114 0" /></svg>
+      </span>
+      <span className="acctname">{m.name}{!m.active && <span className="acctbadge">Hidden</span>}</span>
+      <div className="acctacts">
+        <div className="acctmove">
+          <button className="acctic mv" title="Move up" disabled={first || mMove.isPending} onClick={() => mMove.mutate("up")}>▲</button>
+          <button className="acctic mv" title="Move down" disabled={last || mMove.isPending} onClick={() => mMove.mutate("down")}>▼</button>
+        </div>
+        <button className="acctic" title="Rename" onClick={() => { setVal(m.name); setEditing(true); }}>✏️</button>
+        <button className={`acctbtn ${m.active ? "" : "on"}`} onClick={() => mActive.mutate(!m.active)}>{m.active ? "Hide" : "Show"}</button>
+        <button className="acctic del" title="Delete permanently" onClick={() => { if (window.confirm(`Delete "${m.name}" from the individual list? Existing payments keep their label.`)) mDelete.mutate(); }}>🗑</button>
+      </div>
+    </div>
+  );
+}
+
+function MembersManager({ onToast }: { onToast: (m: string, err?: boolean) => void }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["privateMembers"], queryFn: api.privateMembers });
+  const members = q.data?.members ?? [];
+  const [name, setName] = useState("");
+  const mAdd = useMutation({
+    mutationFn: (n: string) => api.privateMemberCreate(n),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["privateMembers"] }); setName(""); onToast("Member added"); },
+    onError: (e: Error) => onToast(e.message, true),
+  });
+  const canAdd = !!name.trim() && !mAdd.isPending;
+  return (
+    <div className="acctmgr">
+      <div className="acctadd">
+        <input placeholder="Add an individual (e.g. Ramesh)" value={name} onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && canAdd) mAdd.mutate(name.trim()); }} />
+        <button className="btn btn-primary sm" disabled={!canAdd} onClick={() => mAdd.mutate(name.trim())}>{mAdd.isPending ? "Adding…" : "Add"}</button>
+      </div>
+      <div className="acctlist">
+        {members.map((m, i) => <MemberRow key={m.id} m={m} first={i === 0} last={i === members.length - 1} onToast={onToast} />)}
+        {members.length === 0 && <div className="acctempty">No individuals yet — Jagat can add the first one above.</div>}
+      </div>
+    </div>
+  );
+}
+
+/* Team + pay-from accounts. Users: managers only. Accounts/members: any admin. */
 function TeamSheet({ onClose, onToast, isManager, isAdmin }: { onClose: () => void; onToast: (m: string, err?: boolean) => void; isManager: boolean; isAdmin: boolean }) {
   const qc = useQueryClient();
   const usersQ = useQuery({ queryKey: ["team"], queryFn: api.teamList, enabled: isManager });
   const users = usersQ.data?.users ?? [];
   const [showNew, setShowNew] = useState(false);
   const [acctOpen, setAcctOpen] = useState(true);
+  const [memberOpen, setMemberOpen] = useState(true);
   const [name, setName] = useState(""); const [loginId, setLoginId] = useState(""); const [pw, setPw] = useState(""); const [role, setRole] = useState<Role>("USER");
 
   const mCreate = useMutation({
@@ -1233,6 +1325,11 @@ function TeamSheet({ onClose, onToast, isManager, isAdmin }: { onClose: () => vo
                 <span className={`chev ${acctOpen ? "open" : ""}`}>▾</span>
               </button>
               {acctOpen && <AccountsManager onToast={onToast} />}
+              <button type="button" className="sechead toggle" style={{ marginTop: 18 }} onClick={() => setMemberOpen((o) => !o)}>
+                <span>Individual members</span>
+                <span className={`chev ${memberOpen ? "open" : ""}`}>▾</span>
+              </button>
+              {memberOpen && <MembersManager onToast={onToast} />}
             </div>
           )}
         </>

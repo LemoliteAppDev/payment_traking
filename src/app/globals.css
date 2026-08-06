@@ -307,15 +307,10 @@ a{color:inherit}
 .acctmove{display:flex;flex-direction:column;gap:2px}
 .acctic.mv{width:22px;height:14px;font-size:8px;border-radius:5px}
 .acctic.mv:disabled{opacity:.3;cursor:default}
-/* private-payment toggle + badge */
-.privtag{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;color:var(--hold);background:var(--hold-soft);padding:2px 8px;border-radius:999px}
-.privtoggle{display:flex;align-items:flex-start;gap:11px;width:100%;text-align:left;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2);margin-top:4px;transition:.12s;cursor:pointer}
-.privtoggle.on{border-color:var(--hold);background:var(--hold-soft)}
-.privcheck{width:22px;height:22px;flex:none;border-radius:6px;border:1.5px solid var(--line);display:grid;place-items:center;font-size:13px;color:#fff;background:#fff}
-.privtoggle.on .privcheck{background:var(--hold);border-color:var(--hold)}
-.privtxt{display:flex;flex-direction:column;gap:2px}
-.privtxt b{font-size:13.5px;color:var(--ink)}
-.privtxt small{font-size:11.5px;color:var(--ink-3);line-height:1.35}
+.sourcetag{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;color:var(--hold);background:var(--hold-soft);padding:2px 8px;border-radius:999px}
+.srcswitch{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:8px;padding:4px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
+.srcswitch button{min-width:0;border:0;border-radius:7px;background:transparent;color:var(--ink-3);font-size:12px;font-weight:700;padding:8px 6px;transition:.12s}
+.srcswitch button.on{background:#fff;color:var(--brand-ink);box-shadow:0 1px 3px rgba(15,23,42,.08)}
 .acctrow.editing{gap:8px}
 .acctedit{flex:1;min-width:0;font-family:inherit;font-size:14px;padding:8px 11px;border:1px solid var(--brand);border-radius:9px;background:#fff;color:var(--ink);box-shadow:0 0 0 3px var(--brand-soft)}
 .acctbtn{flex:none;font-size:12.5px;font-weight:600;color:var(--ink-3);background:var(--surface);border:1px solid var(--line);padding:6px 14px;border-radius:8px;transition:.12s}

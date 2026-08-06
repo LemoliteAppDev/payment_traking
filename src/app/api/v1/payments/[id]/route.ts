@@ -9,13 +9,8 @@ export const GET = route(async (_req: Request, ctx: { params: Promise<{ id: stri
   const user = await requireUser();
   const { id } = await ctx.params;
   const payment = await loadPayment(id);
-  // Private payments are only for the approver/payer.
-  const canSeePrivate = user.isApprover || user.isPayer;
-  if (payment.isPrivate && !canSeePrivate) {
-    throw new ApiError(404, "NOT_FOUND", "Payment not found.");
-  }
-  // Visibility: admins see all; a user may only see what they raised.
-  if (!payment.isPrivate && !user.isAdmin && payment.requestedById !== user.id) {
+  // Visibility: admins/payer/approver see all; a user may only see what they raised.
+  if (!user.isAdmin && !user.isPayer && !user.isApprover && payment.requestedById !== user.id) {
     throw new ApiError(403, "FORBIDDEN", "You don't have access to this payment.");
   }
   return json({ payment: serializePayment(payment) });
@@ -30,6 +25,7 @@ export const PUT = route(async (req: NextRequest, ctx: { params: Promise<{ id: s
     amount: form.get("amount"),
     payee: form.get("payee"),
     payFrom: form.get("payFrom"),
+    payFromType: form.get("payFromType") ?? undefined,
     purpose: form.get("purpose") ?? undefined,
     upi: form.get("upi") ?? undefined,
     dueDate: form.get("dueDate"),

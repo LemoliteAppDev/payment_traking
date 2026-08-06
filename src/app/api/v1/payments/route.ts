@@ -21,10 +21,10 @@ export const POST = route(async (req: NextRequest) => {
     amount: form.get("amount"),
     payee: form.get("payee"),
     payFrom: form.get("payFrom"),
+    payFromType: form.get("payFromType") ?? undefined,
     purpose: form.get("purpose") ?? undefined,
     upi: form.get("upi") ?? undefined,
     dueDate: form.get("dueDate"),
-    isPrivate: form.get("isPrivate") === "true",
   });
 
   const fileEntry = form.get("file");

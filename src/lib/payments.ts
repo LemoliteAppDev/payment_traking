@@ -16,7 +16,8 @@ import {
 } from "@/lib/status";
 import type { SessionUser } from "@/lib/session";
 import { isActiveAccount } from "@/lib/pay-accounts";
-import type { Prisma, EventType, AttachmentKind } from "@/generated/prisma";
+import { isActivePrivateMember } from "@/lib/private-members";
+import type { Prisma, EventType, AttachmentKind, PaymentSourceType } from "@/generated/prisma";
 
 const paymentInclude = {
   requestedBy: true,
@@ -50,6 +51,7 @@ export function serializePayment(p: FullPayment) {
     amount: p.amount, // paise (BigInt -> string at serialization)
     payee: p.payee,
     payFrom: p.payFrom,
+    payFromType: p.payFromType,
     isPrivate: p.isPrivate,
     purpose: p.purpose,
     upi: p.upi,
@@ -253,10 +255,10 @@ export interface CreateInput {
   amount: bigint;
   payee: string;
   payFrom: string; // name of a PayAccount
+  payFromType?: PaymentSourceType;
   purpose: string;
   upi: string;
   dueDate: Date;
-  isPrivate?: boolean;
 }
 
 export async function createPayment(
@@ -264,21 +266,27 @@ export async function createPayment(
   actor: SessionUser,
   file?: { originalName: string; storedName: string; mimeType: string; size: number },
 ): Promise<FullPayment> {
-  if (!(await isActiveAccount(input.payFrom))) {
+  const payFromType = input.payFromType ?? "ACCOUNT";
+  if (payFromType === "INDIVIDUAL" && !actor.isApprover && !actor.isPayer) {
+    throw new ApiError(403, "FORBIDDEN", "Only Jagat or the payer can create an individual payment.");
+  }
+  if (payFromType === "INDIVIDUAL") {
+    if (!(await isActivePrivateMember(input.payFrom))) {
+      throw new ApiError(400, "INVALID_MEMBER", "Choose a valid individual member.");
+    }
+  } else if (!(await isActiveAccount(input.payFrom))) {
     throw new ApiError(400, "INVALID_ACCOUNT", "Choose a valid pay-from account.");
   }
-  // Private payments are only between the approver and payer — honoured only for
-  // them, and they skip the approval queue (straight to the payer).
-  const isPrivate = !!input.isPrivate && (!!actor.isApprover || !!actor.isPayer);
-  // Users' requests go to the approver first; admins'/private ones go to the payer.
-  const needsApproval = !actor.isAdmin && !isPrivate;
+  // Users' requests go to the approver first; admins' and individual payments go to the payer.
+  const needsApproval = !actor.isAdmin && payFromType !== "INDIVIDUAL";
   const created = await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.create({
       data: {
         amount: input.amount,
         payee: input.payee,
         payFrom: input.payFrom,
-        isPrivate,
+        payFromType,
+        isPrivate: false,
         purpose: input.purpose,
         upi: input.upi || null,
         dueDate: input.dueDate,
@@ -331,15 +339,26 @@ export async function editPayment(
   if (payment.status === "PAID" || payment.status === "CONFIRMED" || payment.status === "CANCELLED") {
     throw new ApiError(409, "NOT_EDITABLE", "This payment can no longer be edited.");
   }
-  // Allow the existing account (even if since deactivated) or any active one.
-  if (input.payFrom !== payment.payFrom && !(await isActiveAccount(input.payFrom))) {
-    throw new ApiError(400, "INVALID_ACCOUNT", "Choose a valid pay-from account.");
+  const payFromType = input.payFromType ?? "ACCOUNT";
+  if (payFromType === "INDIVIDUAL" && !actor.isApprover && !actor.isPayer) {
+    throw new ApiError(403, "FORBIDDEN", "Only Jagat or the payer can use individual members.");
+  }
+  // Allow the existing source (even if since deactivated) or any active source.
+  const sourceUnchanged = input.payFrom === payment.payFrom && payFromType === payment.payFromType;
+  if (!sourceUnchanged) {
+    if (payFromType === "INDIVIDUAL") {
+      if (!(await isActivePrivateMember(input.payFrom))) {
+        throw new ApiError(400, "INVALID_MEMBER", "Choose a valid individual member.");
+      }
+    } else if (!(await isActiveAccount(input.payFrom))) {
+      throw new ApiError(400, "INVALID_ACCOUNT", "Choose a valid pay-from account.");
+    }
   }
   await prisma.$transaction(async (tx) => {
     await tx.payment.update({
       where: { id: paymentId },
       data: {
-        amount: input.amount, payee: input.payee, payFrom: input.payFrom,
+        amount: input.amount, payee: input.payee, payFrom: input.payFrom, payFromType,
         purpose: input.purpose, upi: input.upi || null, dueDate: input.dueDate,
         editedAt: new Date(),
       },
@@ -379,10 +398,6 @@ export async function deletePayment(paymentId: string, actor: SessionUser): Prom
     include: { attachments: true },
   });
   if (!payment) throw new ApiError(404, "NOT_FOUND", "Payment not found.");
-  // Private payments are only for the approver/payer — hide from everyone else.
-  if (payment.isPrivate && !actor.isApprover && !actor.isPayer) {
-    throw new ApiError(404, "NOT_FOUND", "Payment not found.");
-  }
   if (payment.requestedById !== actor.id && !actor.isAdmin) {
     throw new ApiError(403, "FORBIDDEN", "You can't delete this payment.");
   }
@@ -455,14 +470,10 @@ function sortKeyOf(p: { status: string; dueDate: Date }): [number, number] {
 }
 
 export async function listPayments(actor: SessionUser, filter: string, q: string) {
-  // Visibility: private payments are for the approver/payer only. Otherwise
-  // admins see everything and users see only what they raised.
-  const canSeePrivate = !!actor.isApprover || !!actor.isPayer;
-  const where: Prisma.PaymentWhereInput = canSeePrivate
+  // Visibility: admins/payer/approver see everything; users see only what they raised.
+  const where: Prisma.PaymentWhereInput = actor.isAdmin || actor.isPayer || actor.isApprover
     ? {}
-    : actor.isAdmin
-      ? { isPrivate: false }
-      : { requestedById: actor.id, isPrivate: false };
+    : { requestedById: actor.id };
   const all = await prisma.payment.findMany({
     where,
     include: { requestedBy: true, attachments: true },
@@ -497,6 +508,7 @@ export async function listPayments(actor: SessionUser, filter: string, q: string
     amount: p.amount,
     payee: p.payee,
     payFrom: p.payFrom,
+    payFromType: p.payFromType,
     purpose: p.purpose,
     status: p.status,
     effective: effectiveFor(p),

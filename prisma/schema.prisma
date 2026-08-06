@@ -32,6 +32,11 @@ enum AttachmentKind {
   PROOF
 }
 
+enum PaymentSourceType {
+  ACCOUNT
+  INDIVIDUAL
+}
+
 enum EventType {
   REQUEST
   APPROVE
@@ -129,6 +134,7 @@ model Payment {
   amount        BigInt // integer paise
   payee         String
   payFrom       String     // name of a PayAccount (the source to pay from)
+  payFromType   PaymentSourceType @default(ACCOUNT)
   isPrivate     Boolean    @default(false) // private approver<->payer payment
   purpose       String     @db.Text
   upi           String?
@@ -201,6 +207,16 @@ model PayAccount {
   name      String   @unique
   active    Boolean  @default(true)
   sortOrder Int      @default(0) // display priority (lower = higher up)
+  createdAt DateTime @default(now())
+}
+
+// Private individual names Jagat can route payments from, shared only with
+// approver/payer workflows. Payments store the display name on payFrom.
+model PrivateMember {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
   createdAt DateTime @default(now())
 }
 

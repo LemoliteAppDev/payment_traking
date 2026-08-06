@@ -20,6 +20,7 @@ export interface TeamUser {
 export interface Me { me: MeUser | null }
 
 export interface PayAccountLite { id: string; name: string; active: boolean }
+export interface PrivateMemberLite { id: string; name: string; active: boolean }
 
 export interface OtpMsg { id: string; fromMe: boolean; senderName: string; body: string; createdAt: string; expiresAt: string }
 
@@ -28,6 +29,7 @@ export interface Card {
   amount: string; // paise
   payee: string;
   payFrom: string;
+  payFromType: "ACCOUNT" | "INDIVIDUAL";
   purpose: string;
   status: Status;
   effective: Effective;
@@ -150,6 +152,18 @@ export const api = {
     req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "DELETE" }),
   payAccountMove: (id: string, move: "up" | "down") =>
     req<{ ok: true }>(`/api/v1/pay-accounts/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ move }) }),
+  // individual members
+  privateMembers: () => req<{ members: PrivateMemberLite[] }>("/api/v1/private-members"),
+  privateMemberCreate: (name: string) =>
+    req<{ member: PrivateMemberLite }>("/api/v1/private-members", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }),
+  privateMemberSetActive: (id: string, active: boolean) =>
+    req<{ ok: true }>(`/api/v1/private-members/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ active }) }),
+  privateMemberRename: (id: string, name: string) =>
+    req<{ ok: true }>(`/api/v1/private-members/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }),
+  privateMemberDelete: (id: string) =>
+    req<{ ok: true }>(`/api/v1/private-members/${id}`, { method: "DELETE" }),
+  privateMemberMove: (id: string, move: "up" | "down") =>
+    req<{ ok: true }>(`/api/v1/private-members/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ move }) }),
   // standalone secure OTP channel (approver <-> payer)
   otpList: () => req<{ messages: OtpMsg[] }>(`/api/v1/otp`),
   otpSend: (message: string) =>

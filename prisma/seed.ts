@@ -49,9 +49,29 @@ async function main() {
   }
 
   // Pay-from accounts (the "Pay from" list) in priority order. Admins reorder in-app.
-  const seedAccounts: [string, number][] = [["Shivam", 1], ["Peliswan", 2], ["Zenith", 4], ["Lemolite", 5]];
+  const seedAccounts: [string, number][] = [
+    ["Shivam", 1],
+    ["Peliswan", 2],
+    ["Bm roadlines", 3],
+    ["Zenith", 4],
+    ["Lemolite", 5],
+    ["Shakti", 6],
+  ];
   for (const [name, sortOrder] of seedAccounts) {
-    await prisma.payAccount.upsert({ where: { name }, update: {}, create: { name, sortOrder } });
+    await prisma.payAccount.upsert({
+      where: { name },
+      update: { sortOrder, active: true },
+      create: { name, sortOrder },
+    });
+  }
+
+  const seedPrivateMembers: [string, number][] = [["Jagat", 1], ["Jignesh", 2]];
+  for (const [name, sortOrder] of seedPrivateMembers) {
+    await prisma.privateMember.upsert({
+      where: { name },
+      update: { sortOrder, active: true },
+      create: { name, sortOrder },
+    });
   }
 
   // Demo payments — only when SEED_DEMO=1 (never in real/production seeding).

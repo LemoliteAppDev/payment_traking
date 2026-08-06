@@ -11,10 +11,10 @@ export const createPaymentSchema = z.object({
   amount: paise,
   payee: z.string().trim().min(1, "payee is required").max(120),
   payFrom: z.string().trim().min(1, "pay-from account is required").max(60),
+  payFromType: z.enum(["ACCOUNT", "INDIVIDUAL"]).optional().default("ACCOUNT"),
   purpose: z.string().trim().max(500).optional().default(""),
   upi: z.string().trim().max(120).optional().default(""),
   dueDate: z.coerce.date(),
-  isPrivate: z.boolean().optional().default(false),
 });
 export type CreatePaymentInput = z.infer<typeof createPaymentSchema>;
 
@@ -41,6 +41,10 @@ export const setPasswordSchema = z.object({ password: z.string().min(6).max(200)
 export const setActiveSchema = z.object({ active: z.boolean() });
 
 export const createPayAccountSchema = z.object({
+  name: z.string().trim().min(1, "name is required").max(60),
+});
+
+export const createPrivateMemberSchema = z.object({
   name: z.string().trim().min(1, "name is required").max(60),
 });
 
