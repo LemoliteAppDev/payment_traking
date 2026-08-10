@@ -232,17 +232,20 @@ export const fmtShort = (dateISO: string): string =>
 /**
  * List sort key: [tier, dueDays]. Lower tier shows first.
  *  0 = due today · 1 = other active (ordered by due date) · 2 = waiting for approval · 3 = paid/done
+ * Anything still live and dated today wins tier 0, approval-pending included —
+ * today's payments always sit at the top of the list.
  * Within tier 1 sort by dueDays asc; elsewhere newest-first (handled at the call site).
  */
 export function listSortKey(p: { status: Status; dueDate: string }): [number, number] {
   if (p.status === "PAID" || p.status === "CONFIRMED" || p.status === "CANCELLED") return [3, 0];
-  if (p.status === "AWAITING_APPROVAL" || p.status === "RETURNED") return [2, 0];
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const due = new Date(p.dueDate);
   due.setHours(0, 0, 0, 0);
   const days = Math.round((due.getTime() - today.getTime()) / DAY);
-  return days === 0 ? [0, 0] : [1, days];
+  if (days === 0) return [0, 0];
+  if (p.status === "AWAITING_APPROVAL" || p.status === "RETURNED") return [2, 0];
+  return [1, days];
 }
 
 export function isoDay(offset = 0): string {

@@ -7,6 +7,7 @@ import {
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
 import { enablePush, isPushEnabled, pushSupported, pushBlocked } from "@/lib/push-client";
+import { notifyFx, primeAlertFx } from "@/lib/alert-fx";
 
 /* ── tiny inline icons (match the prototype) ───────────────────────── */
 const IcSearch = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></svg>);
@@ -420,7 +421,7 @@ function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, e
   const [push, setPush] = useState<"loading" | "on" | "off" | "blocked" | "unsupported">("loading");
 
   const notifQ = useQuery({ queryKey: ["notifications"], queryFn: api.notifications, refetchInterval: 10000 });
-  const allItems = notifQ.data?.items ?? [];
+  const allItems = useMemo(() => notifQ.data?.items ?? [], [notifQ.data]);
 
   // Swipe-dismissed notifications, remembered per device (they're a derived feed,
   // so there's nothing to delete server-side — we just hide them here).
@@ -438,6 +439,34 @@ function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, e
 
   const items = allItems.filter((n) => !dismissed.has(n.id));
   const unread = items.filter((n) => n.unread).length;
+
+  // Chime + buzz when something new lands. The first poll only seeds the set —
+  // opening the app is not "new activity".
+  const seenIds = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!allItems.length && !notifQ.data) return;
+    const seen = seenIds.current;
+    if (seen === null) { seenIds.current = new Set(allItems.map((n) => n.id)); return; }
+    let fresh = false;
+    for (const n of allItems) if (!seen.has(n.id)) { seen.add(n.id); fresh = true; }
+    if (fresh) notifyFx();
+  }, [allItems, notifQ.data]);
+
+  // Audio needs a user gesture first; and a push arriving while the tab is open
+  // is announced by the service worker (the OS often stays silent then).
+  useEffect(() => {
+    primeAlertFx();
+    if (!("serviceWorker" in navigator)) return;
+    const onMsg = (e: MessageEvent) => {
+      if (e.data?.type === "paytrack-notify") {
+        notifyFx();
+        qc.invalidateQueries({ queryKey: ["notifications"] });
+        qc.invalidateQueries({ queryKey: ["payments"] });
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    return () => navigator.serviceWorker.removeEventListener("message", onMsg);
+  }, [qc]);
 
   const markRead = useMutation({
     mutationFn: api.markNotificationsRead,

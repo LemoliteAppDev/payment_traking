@@ -38,13 +38,24 @@ self.addEventListener("push", (e) => {
   }
   const title = data.title || "PayTrack";
   e.waitUntil(
-    self.registration.showNotification(title, {
-      body: data.body || "",
-      icon: "/icon.svg",
-      badge: "/icon.svg",
-      tag: data.tag,
-      data: { url: data.url || "/" },
-    }),
+    Promise.all([
+      self.registration.showNotification(title, {
+        body: data.body || "",
+        icon: "/icon.svg",
+        badge: "/icon.svg",
+        tag: data.tag,
+        renotify: !!data.tag, // a repeat on the same tag should still buzz
+        silent: false, // let the OS play its notification sound
+        vibrate: [120, 60, 120],
+        data: { url: data.url || "/" },
+      }),
+      // If a tab is open, ask it to play the in-app chime + buzz — an open page
+      // often suppresses the OS notification sound.
+      self.clients
+        .matchAll({ type: "window", includeUncontrolled: true })
+        .then((clients) => clients.forEach((c) => c.postMessage({ type: "paytrack-notify" })))
+        .catch(() => {}),
+    ]),
   );
 });
 
