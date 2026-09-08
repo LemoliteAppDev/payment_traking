@@ -19,7 +19,12 @@ export const POST = route(async (req: Request) => {
   requireReminderManager(user);
   const body = createReminderSchema.parse(await readJson(req));
   const reminder = await createReminder(
-    { description: body.description, amount: body.amount, dueDate: ymdToDate(body.dueDate) },
+    {
+      description: body.description,
+      amount: body.amount,
+      dueDate: ymdToDate(body.dueDate),
+      repeatMonths: body.repeatMonths,
+    },
     user,
   );
   return json({ reminder }, { status: 201 });

@@ -73,6 +73,8 @@ export interface Reminder {
   amount: string; // paise
   dueDate: string; // YYYY-MM-DD
   status: "PENDING" | "PAID";
+  seriesId: string | null;
+  monthly: boolean;
   daysUntilDue: number;
   late: boolean;
   inWindow: boolean;
@@ -84,7 +86,7 @@ export interface Reminder {
   createdAt: string;
 }
 export interface UserLite2 { id: string; name: string }
-export interface ParsedReminderRow { line: number; dueDate: string; description: string; amount: string }
+export interface ParsedReminderRow { line: number; dueDate: string; description: string; amount: string; repeatMonths: number }
 export interface ReminderRowError { line: number; raw: string; message: string }
 export interface ReminderImportResult {
   parsed: number;
@@ -194,11 +196,12 @@ export const api = {
     req<{ ok: true }>(`/api/v1/private-members/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ move }) }),
   // EMI reminders (manager adds; manager/approver/payer see and mark paid)
   reminders: () => req<{ reminders: Reminder[] }>("/api/v1/reminders"),
-  reminderCreate: (body: { description: string; amount: string; dueDate: string }) =>
+  reminderCreate: (body: { description: string; amount: string; dueDate: string; repeatMonths?: number }) =>
     req<{ reminder: Reminder }>("/api/v1/reminders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
   reminderUpdate: (id: string, body: { description?: string; amount?: string; dueDate?: string }) =>
     req<{ reminder: Reminder }>(`/api/v1/reminders/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
-  reminderDelete: (id: string) => req<{ ok: true }>(`/api/v1/reminders/${id}`, { method: "DELETE" }),
+  reminderDelete: (id: string, scope: "one" | "series" = "one") =>
+    req<{ ok: true; deleted: number }>(`/api/v1/reminders/${id}?scope=${scope}`, { method: "DELETE" }),
   reminderMarkPaid: (id: string, body: { paidOn?: string; note?: string }) =>
     req<{ reminder: Reminder }>(`/api/v1/reminders/${id}/paid`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
   reminderUnmarkPaid: (id: string) =>

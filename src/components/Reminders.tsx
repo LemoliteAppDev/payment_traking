@@ -28,6 +28,18 @@ function Sheet({ title, children, foot, onClose }: { title: string; children: Re
   );
 }
 
+/** Same day-of-month N months on, clamped to short months — mirrors the
+    server's addMonthsYmd so the preview matches what gets created. */
+function lastDueDate(ymd: string, months: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const total = y * 12 + (m - 1) + (months - 1);
+  const year = Math.floor(total / 12);
+  const month = total % 12;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${year}-${pad(month + 1)}-${pad(Math.min(d, lastDay))}`;
+}
+
 const fmtDay = (ymd: string): string =>
   new Date(`${ymd}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
@@ -48,6 +60,7 @@ export function RemindersPanel({ me, onToast }: { me: MeUser | null; onToast: (m
   const [importOpen, setImportOpen] = useState(false);
   const [editFor, setEditFor] = useState<Reminder | null>(null);
   const [payFor, setPayFor] = useState<Reminder | null>(null);
+  const [deleteFor, setDeleteFor] = useState<Reminder | null>(null);
   const [showPaid, setShowPaid] = useState(false);
 
   const q = useQuery({ queryKey: ["reminders"], queryFn: api.reminders, enabled: !!me, refetchInterval: 30000 });
@@ -55,8 +68,12 @@ export function RemindersPanel({ me, onToast }: { me: MeUser | null; onToast: (m
   const refresh = () => qc.invalidateQueries({ queryKey: ["reminders"] });
 
   const mDelete = useMutation({
-    mutationFn: (id: string) => api.reminderDelete(id),
-    onSuccess: () => { refresh(); onToast("Reminder removed"); },
+    mutationFn: ({ id, scope }: { id: string; scope: "one" | "series" }) => api.reminderDelete(id, scope),
+    onSuccess: (r) => {
+      refresh();
+      setDeleteFor(null);
+      onToast(r.deleted > 1 ? `Removed ${r.deleted} months` : "Reminder removed");
+    },
     onError: (e: Error) => onToast(e.message, true),
   });
   const mUndo = useMutation({
@@ -85,6 +102,7 @@ export function RemindersPanel({ me, onToast }: { me: MeUser | null; onToast: (m
           ) : (
             <div className="remmeta">
               Due {fmtDay(r.dueDate)} · <b style={{ color: lab.c }}>{lab.t}</b>
+              {r.monthly && <span className="remtag">monthly</span>}
             </div>
           )}
           {paidRow && r.paidNote && <div className="remnote">“{r.paidNote}”</div>}
@@ -99,7 +117,11 @@ export function RemindersPanel({ me, onToast }: { me: MeUser | null; onToast: (m
               <button
                 className="rembtn"
                 title="Delete"
-                onClick={() => { if (window.confirm(`Delete "${r.description}" permanently?`)) mDelete.mutate(r.id); }}
+                onClick={() => {
+                  // A monthly run asks which months to drop; a one-off just confirms.
+                  if (r.monthly) setDeleteFor(r);
+                  else if (window.confirm(`Delete "${r.description}" permanently?`)) mDelete.mutate({ id: r.id, scope: "one" });
+                }}
               >🗑️</button>
             )}
           </div>
@@ -156,6 +178,14 @@ export function RemindersPanel({ me, onToast }: { me: MeUser | null; onToast: (m
       {addOpen && <ReminderSheet onClose={() => setAddOpen(false)} onDone={(m) => { refresh(); setAddOpen(false); onToast(m); }} onError={(m) => onToast(m, true)} />}
       {editFor && <ReminderSheet initial={editFor} onClose={() => setEditFor(null)} onDone={(m) => { refresh(); setEditFor(null); onToast(m); }} onError={(m) => onToast(m, true)} />}
       {payFor && <MarkPaidSheet reminder={payFor} me={me} onClose={() => setPayFor(null)} onDone={(m) => { refresh(); setPayFor(null); onToast(m); }} onError={(m) => onToast(m, true)} />}
+      {deleteFor && (
+        <DeleteSeriesSheet
+          reminder={deleteFor}
+          busy={mDelete.isPending}
+          onClose={() => setDeleteFor(null)}
+          onDelete={(scope) => mDelete.mutate({ id: deleteFor.id, scope })}
+        />
+      )}
       {importOpen && <ImportSheet onClose={() => setImportOpen(false)} onDone={(m) => { refresh(); setImportOpen(false); onToast(m); }} onError={(m) => onToast(m, true)} />}
     </div>
   );
@@ -168,22 +198,34 @@ function ReminderSheet({
   const [dueDate, setDueDate] = useState(initial?.dueDate ?? isoDay());
   const [description, setDescription] = useState(initial?.description ?? "");
   const [rupees, setRupees] = useState(initial ? String(Number(initial.amount) / 100) : "");
+  // Editing touches only the month in front of you — the repeat is set once, at
+  // creation, because changing it later would mean rewriting the whole run.
+  const [monthly, setMonthly] = useState(false);
+  const [months, setMonths] = useState("12");
 
   const amountPaise = (() => {
     const n = Number(rupees);
     return Number.isFinite(n) && n > 0 ? String(Math.round(n * 100)) : "";
   })();
 
+  const repeatMonths = monthly ? Number(months) : 1;
+  const repeatOk = !monthly || (Number.isInteger(repeatMonths) && repeatMonths >= 1 && repeatMonths <= 120);
+
   const m = useMutation({
     mutationFn: () => {
       const body = { description: description.trim(), amount: amountPaise, dueDate };
-      return initial ? api.reminderUpdate(initial.id, body) : api.reminderCreate(body);
+      return initial ? api.reminderUpdate(initial.id, body) : api.reminderCreate({ ...body, repeatMonths });
     },
-    onSuccess: () => onDone(initial ? "Reminder updated" : "Reminder added"),
+    onSuccess: () =>
+      onDone(
+        initial ? "Reminder updated"
+          : repeatMonths > 1 ? `Added ${repeatMonths} monthly reminders`
+          : "Reminder added",
+      ),
     onError: (e: Error) => onError(e.message),
   });
 
-  const ready = !!description.trim() && !!amountPaise && /^\d{4}-\d{2}-\d{2}$/.test(dueDate);
+  const ready = !!description.trim() && !!amountPaise && /^\d{4}-\d{2}-\d{2}$/.test(dueDate) && repeatOk;
 
   return (
     <Sheet
@@ -205,7 +247,29 @@ function ReminderSheet({
         <div className="amtin"><span>₹</span><input inputMode="decimal" value={rupees} onChange={(e) => setRupees(e.target.value)} placeholder="45000" /></div>
         <div className="amtwords">{Number(rupees) > 0 ? wordsFromRupees(Number(rupees)) : ""}</div>
       </div>
-      <p>Reminders start 3 days before this date and repeat every day until someone marks it paid.</p>
+      {!initial && (
+        <div className="fld">
+          <label className="remcheck">
+            <input type="checkbox" checked={monthly} onChange={(e) => setMonthly(e.target.checked)} />
+            <span>This repeats every month</span>
+          </label>
+          {monthly && (
+            <>
+              <div className="remmonths">
+                <span>for</span>
+                <input inputMode="numeric" value={months} onChange={(e) => setMonths(e.target.value)} />
+                <span>months</span>
+              </div>
+              <div className="amtwords">
+                {repeatOk
+                  ? `${repeatMonths} reminders · ${fmtDay(dueDate)} to ${fmtDay(lastDueDate(dueDate, repeatMonths))}`
+                  : "Enter 1 to 120 months."}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      <p>Reminders start 3 days before each due date and repeat every day until someone marks that month paid.</p>
     </Sheet>
   );
 }
@@ -250,6 +314,35 @@ function MarkPaidSheet({
   );
 }
 
+/* ── deleting one month vs the whole run ───────────────────────────── */
+function DeleteSeriesSheet({
+  reminder, busy, onClose, onDelete,
+}: { reminder: Reminder; busy: boolean; onClose: () => void; onDelete: (scope: "one" | "series") => void }) {
+  return (
+    <Sheet
+      title="Delete this reminder"
+      onClose={onClose}
+      foot={<button className="btn btn-ghost" onClick={onClose}>Cancel</button>}
+    >
+      <div className="rempaidhead">
+        <div className="remico">📅</div>
+        <div>
+          <div className="remdesc">{reminder.description}</div>
+          <div className="remmeta">{fmtPaise(reminder.amount)} · due {fmtDay(reminder.dueDate)} · repeats monthly</div>
+        </div>
+      </div>
+      <p>This is one month of a monthly EMI. Which do you want to remove?</p>
+      <button className="btn btn-ghost" disabled={busy} onClick={() => onDelete("one")}>
+        Just this month
+      </button>
+      <button className="btn btn-ghost del" disabled={busy} onClick={() => onDelete("series")}>
+        This month and every month after it
+      </button>
+      <p>Months already marked paid are kept either way — they&apos;re the record of what you actually paid.</p>
+    </Sheet>
+  );
+}
+
 /* ── import a sheet ────────────────────────────────────────────────── */
 function ImportSheet({
   onClose, onDone, onError,
@@ -286,7 +379,9 @@ function ImportSheet({
           <>
             <button className="btn btn-ghost" onClick={() => setPreview(null)}>Back</button>
             <button className="btn btn-primary" style={{ flex: 1 }} disabled={!preview.rows.length || mCommit.isPending} onClick={() => mCommit.mutate()}>
-              {mCommit.isPending ? "Importing…" : `Import ${preview.rows.length} reminder${preview.rows.length === 1 ? "" : "s"}`}
+              {mCommit.isPending
+                ? "Importing…"
+                : `Import ${preview.rows.reduce((n, r) => n + Math.max(1, r.repeatMonths), 0)} reminders`}
             </button>
           </>
         ) : (
@@ -302,8 +397,13 @@ function ImportSheet({
       {!preview ? (
         <>
           <p>
-            Three columns, in this order: <b>due date, EMI description, amount</b>. A header row is fine.
-            Dates can be 06/09/2026, 06-09-2026 or 2026-09-06 — day first.
+            Columns in this order: <b>due date, EMI description, amount</b>, and optionally
+            <b> repeat</b>. A header row is fine. Dates can be 06/09/2026, 06-09-2026 or
+            2026-09-06 — day first.
+          </p>
+          <p>
+            Leave the 4th column empty for a one-off. Put <b>36</b> in it for a 36-month EMI, or a
+            date like <b>06/08/2029</b> to repeat until then — one line becomes the whole schedule.
           </p>
           <div className="fld">
             <label>Upload a CSV</label>
@@ -315,14 +415,17 @@ function ImportSheet({
               rows={7}
               value={csv}
               onChange={(e) => { setCsv(e.target.value); setPreview(null); }}
-              placeholder={"06/09/2026, Car loan EMI — HDFC, 45000\n10/09/2026, Office rent, 120000"}
+              placeholder={"06/09/2026, Car loan EMI — HDFC, 45000, 36\n10/09/2026, Office rent, 120000"}
             />
           </div>
         </>
       ) : (
         <>
           <div className="impsum">
-            <b>{preview.rows.length}</b> ready to import
+            <b>{preview.rows.length}</b> line{preview.rows.length === 1 ? "" : "s"} ready
+            {preview.rows.some((r) => r.repeatMonths > 1) && (
+              <> · <b>{preview.rows.reduce((n, r) => n + Math.max(1, r.repeatMonths), 0)}</b> reminders once the monthly ones are expanded</>
+            )}
             {preview.duplicates.length > 0 && <> · {preview.duplicates.length} already added</>}
             {preview.errors.length > 0 && <> · <span style={{ color: "var(--over)" }}>{preview.errors.length} couldn&apos;t be read</span></>}
           </div>
@@ -331,7 +434,10 @@ function ImportSheet({
               {preview.rows.map((r) => (
                 <div key={r.line} className="improw">
                   <span className="impdate">{fmtDay(r.dueDate)}</span>
-                  <span className="impdesc">{r.description}</span>
+                  <span className="impdesc">
+                    {r.description}
+                    {r.repeatMonths > 1 && <span className="remtag">×{r.repeatMonths} months</span>}
+                  </span>
                   <span className="impamt grotesk">{fmtPaise(r.amount)}</span>
                 </div>
               ))}

@@ -7,6 +7,7 @@
 // somebody marks it paid. Two sends a day (11:00 and 21:00 IST), deliberately
 // independent of WORK_HOURS, which stops at 21:00 and would swallow the
 // evening send.
+import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { ApiError } from "@/lib/api";
 import { sendPushToUser } from "@/lib/push";
@@ -78,9 +79,44 @@ export function ymdToDate(ymd: string): Date {
   return new Date(`${ymd}T00:00:00.000Z`);
 }
 
+/** Longest a monthly EMI run may be — 10 years of installments. */
+export const MAX_REPEAT_MONTHS = 120;
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * Same day-of-month, `months` later, clamped to the end of short months.
+ * An EMI due the 31st lands on 28 Feb but returns to the 31st in March — it
+ * stays anchored to the original day instead of drifting earlier each month.
+ */
+export function addMonthsYmd(ymd: string, months: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const total = y * 12 + (m - 1) + months;
+  const year = Math.floor(total / 12);
+  const month = total % 12; // 0-based
+  const lastDayOfMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return `${year}-${pad(month + 1)}-${pad(Math.min(d, lastDayOfMonth))}`;
+}
+
+/** The full run of due dates for a monthly EMI: month 1 is `ymd` itself. */
+export function expandMonthly(ymd: string, months: number): string[] {
+  const count = Math.max(1, Math.min(Math.trunc(months), MAX_REPEAT_MONTHS));
+  return Array.from({ length: count }, (_, i) => addMonthsYmd(ymd, i));
+}
+
+/** Whole months from one due date to another, for "repeat until <date>". */
+export function monthsBetweenYmd(fromYmd: string, toYmd: string): number {
+  const [fy, fm] = fromYmd.split("-").map(Number);
+  const [ty, tm] = toYmd.split("-").map(Number);
+  const months = (ty * 12 + tm) - (fy * 12 + fm);
+  // Inclusive of the first month; a same-month end date is a single installment.
+  return months < 0 ? 0 : months + 1;
+}
+
 // ── shaping ─────────────────────────────────────────────────────────
 type ReminderRow = {
   id: string; description: string; amount: bigint; dueDate: Date; status: "PENDING" | "PAID";
+  seriesId: string | null;
   paidOn: Date | null; paidAt: Date | null; paidNote: string | null; createdAt: Date;
   createdBy: { id: string; name: string } | null;
   paidBy: { id: string; name: string } | null;
@@ -94,6 +130,8 @@ function shape(r: ReminderRow) {
     amount: r.amount.toString(),
     dueDate: dueYmd(r.dueDate),
     status: r.status,
+    seriesId: r.seriesId,
+    monthly: !!r.seriesId,
     daysUntilDue: days,
     late: r.status === "PENDING" && days < 0,
     inWindow: r.status === "PENDING" && days <= LEAD_DAYS,
@@ -125,19 +163,27 @@ export interface ReminderInput {
   description: string;
   amount: bigint;
   dueDate: Date;
+  /** 1 = a one-off. Above that, one dated row per month sharing a seriesId. */
+  repeatMonths?: number;
 }
 
 export async function createReminder(input: ReminderInput, user: SessionUser): Promise<ReminderDTO> {
-  const r = await prisma.reminder.create({
-    data: {
-      description: input.description,
-      amount: input.amount,
-      dueDate: input.dueDate,
-      createdById: user.id,
-    },
-    include,
-  });
-  return shape(r);
+  const months = input.repeatMonths ?? 1;
+  const dates = expandMonthly(dueYmd(input.dueDate), months);
+  const seriesId = dates.length > 1 ? randomUUID() : null;
+
+  const rows = dates.map((ymd) => ({
+    description: input.description,
+    amount: input.amount,
+    dueDate: ymdToDate(ymd),
+    createdById: user.id,
+    seriesId,
+  }));
+
+  // Return the first installment — that's the one the UI just added.
+  const first = await prisma.reminder.create({ data: rows[0], include });
+  if (rows.length > 1) await prisma.reminder.createMany({ data: rows.slice(1) });
+  return shape(first);
 }
 
 export async function updateReminder(id: string, input: Partial<ReminderInput>): Promise<ReminderDTO> {
@@ -156,10 +202,27 @@ export async function updateReminder(id: string, input: Partial<ReminderInput>):
   return shape(r);
 }
 
-export async function deleteReminder(id: string): Promise<void> {
-  await prisma.reminder.delete({ where: { id } }).catch(() => {
-    throw new ApiError(404, "NOT_FOUND", "Reminder not found.");
-  });
+/**
+ * Delete one reminder, or (scope "series") that one plus every later month of
+ * the same monthly run. Months already marked paid are left alone — they're
+ * the record of what was actually paid.
+ */
+export async function deleteReminder(id: string, scope: "one" | "series" = "one"): Promise<number> {
+  const existing = await prisma.reminder.findUnique({ where: { id } });
+  if (!existing) throw new ApiError(404, "NOT_FOUND", "Reminder not found.");
+
+  if (scope === "series" && existing.seriesId) {
+    const { count } = await prisma.reminder.deleteMany({
+      where: {
+        seriesId: existing.seriesId,
+        dueDate: { gte: existing.dueDate },
+        OR: [{ status: "PENDING" }, { id }],
+      },
+    });
+    return count;
+  }
+  await prisma.reminder.delete({ where: { id } });
+  return 1;
 }
 
 /** Any of the three marks it paid; reminders stop the instant this lands. */
@@ -209,6 +272,7 @@ export interface ParsedRow {
   dueDate: string; // YYYY-MM-DD
   description: string;
   amount: string; // paise
+  repeatMonths: number; // 1 = one-off
 }
 export interface RowError {
   line: number;
@@ -290,6 +354,29 @@ export function parseAmountToPaise(raw: string): bigint | null {
   return value > 0n ? value : null;
 }
 
+/**
+ * Optional 4th column: how long a monthly EMI runs. Either a count of months
+ * ("36") or a date to repeat until ("06/09/2029"). Blank means a one-off.
+ * Returns null when the cell is present but unreadable.
+ */
+export function parseRepeat(raw: string, fromYmd: string): number | null {
+  const s = raw.trim();
+  if (!s) return 1;
+
+  const plain = s.replace(/\s*(months?|mo|m|times|x)\s*$/i, "").trim();
+  if (/^\d{1,3}$/.test(plain)) {
+    const n = Number(plain);
+    return n >= 1 && n <= MAX_REPEAT_MONTHS ? n : null;
+  }
+
+  const until = parseDueDate(s);
+  if (until) {
+    const months = monthsBetweenYmd(fromYmd, until);
+    return months >= 1 && months <= MAX_REPEAT_MONTHS ? months : null;
+  }
+  return null;
+}
+
 function looksLikeHeader(cells: string[]): boolean {
   const joined = cells.join(" ").toLowerCase();
   return /due|date/.test(joined) && /amount|amt/.test(joined);
@@ -336,7 +423,16 @@ export function parseReminderCsv(text: string): ParseResult {
       errors.push({ line, raw, message: `Can't read the amount "${amountCell}".` });
       return;
     }
-    rows.push({ line, dueDate, description, amount: amount.toString() });
+    const repeatMonths = parseRepeat(cells[3] ?? "", dueDate);
+    if (repeatMonths === null) {
+      errors.push({
+        line,
+        raw,
+        message: `Can't read the repeat "${cells[3]}". Use a number of months, or a date to repeat until.`,
+      });
+      return;
+    }
+    rows.push({ line, dueDate, description, amount: amount.toString(), repeatMonths });
   });
 
   return { rows, errors };
@@ -344,7 +440,7 @@ export function parseReminderCsv(text: string): ParseResult {
 
 export interface ImportResult {
   parsed: number;
-  imported: number;
+  imported: number; // rows created, counting every month of a repeating line
   duplicates: ParsedRow[];
   errors: RowError[];
   rows: ParsedRow[]; // what would be / was saved
@@ -374,18 +470,24 @@ export async function importReminders(text: string, user: SessionUser, dryRun: b
 
   if (!dryRun && fresh.length) {
     await prisma.reminder.createMany({
-      data: fresh.map((r) => ({
-        description: r.description,
-        amount: BigInt(r.amount),
-        dueDate: ymdToDate(r.dueDate),
-        createdById: user.id,
-      })),
+      data: fresh.flatMap((r) => {
+        const dates = expandMonthly(r.dueDate, r.repeatMonths);
+        const seriesId = dates.length > 1 ? randomUUID() : null;
+        return dates.map((ymd) => ({
+          description: r.description,
+          amount: BigInt(r.amount),
+          dueDate: ymdToDate(ymd),
+          createdById: user.id,
+          seriesId,
+        }));
+      }),
     });
   }
 
+  const installments = fresh.reduce((n, r) => n + Math.max(1, r.repeatMonths), 0);
   return {
     parsed: rows.length,
-    imported: dryRun ? 0 : fresh.length,
+    imported: dryRun ? 0 : installments,
     duplicates,
     errors,
     rows: fresh,

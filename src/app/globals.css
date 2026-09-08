@@ -364,6 +364,11 @@ a{color:inherit}
 .remdesc{font-size:14px;font-weight:600;color:var(--ink);line-height:1.35;word-break:break-word}
 .remmeta{font-size:11.5px;color:var(--ink-3);margin-top:3px}
 .remnote{font-size:11.5px;color:var(--ink-2);margin-top:4px;font-style:italic}
+.remtag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.02em;background:var(--brand-soft);color:var(--brand-ink);vertical-align:1px}
+.remcheck{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:600;color:var(--ink);cursor:pointer;margin-bottom:0}
+.remcheck input{width:17px;height:17px;flex:none;accent-color:var(--brand);padding:0}
+.remmonths{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13.5px;color:var(--ink-2)}
+.remmonths input{width:78px;text-align:center;font-family:'Space Grotesk';font-weight:600;font-size:16px}
 .remright{display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex:none}
 .remamt{font-size:15px;font-weight:700;color:var(--ink);white-space:nowrap}
 .rembtns{display:flex;gap:5px;align-items:center}

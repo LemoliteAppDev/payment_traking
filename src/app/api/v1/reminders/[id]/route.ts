@@ -17,11 +17,13 @@ export const PATCH = route(async (req: Request, ctx: { params: Promise<{ id: str
   return json({ reminder });
 });
 
-// Manager only: remove a reminder for good.
-export const DELETE = route(async (_req: Request, ctx: { params: Promise<{ id: string }> }) => {
+// Manager only: remove a reminder for good. `?scope=series` also removes every
+// later unpaid month of the same monthly run.
+export const DELETE = route(async (req: Request, ctx: { params: Promise<{ id: string }> }) => {
   const user = await requireUser();
   requireReminderManager(user);
   const { id } = await ctx.params;
-  await deleteReminder(id);
-  return json({ ok: true });
+  const scope = new URL(req.url).searchParams.get("scope") === "series" ? "series" : "one";
+  const deleted = await deleteReminder(id, scope);
+  return json({ ok: true, deleted });
 });

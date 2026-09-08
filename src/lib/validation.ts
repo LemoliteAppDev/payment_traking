@@ -76,6 +76,8 @@ export const createReminderSchema = z.object({
   description: z.string().trim().min(1, "description is required").max(500),
   amount: paise,
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dueDate must be YYYY-MM-DD"),
+  // 1 = one-off. Above that, one dated row per month (10 years max).
+  repeatMonths: z.number().int().min(1).max(120).optional().default(1),
 });
 
 export const updateReminderSchema = z.object({

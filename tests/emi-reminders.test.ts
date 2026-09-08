@@ -8,7 +8,11 @@ import {
   ymdToDate,
   dueHeadline,
   reminderPush,
+  addMonthsYmd,
+  expandMonthly,
+  parseRepeat,
   LEAD_DAYS,
+  MAX_REPEAT_MONTHS,
 } from "@/lib/emi-reminders";
 
 describe("parseDueDate", () => {
@@ -64,8 +68,8 @@ describe("parseReminderCsv", () => {
     const { rows, errors } = parseReminderCsv(csv);
     expect(errors).toEqual([]);
     expect(rows).toEqual([
-      { line: 2, dueDate: "2026-09-06", description: "Car loan EMI — HDFC", amount: "4500000" },
-      { line: 3, dueDate: "2026-09-10", description: "Office rent", amount: "12000000" },
+      { line: 2, dueDate: "2026-09-06", description: "Car loan EMI — HDFC", amount: "4500000", repeatMonths: 1 },
+      { line: 3, dueDate: "2026-09-10", description: "Office rent", amount: "12000000", repeatMonths: 1 },
     ]);
   });
 
@@ -163,5 +167,62 @@ describe("one notification per EMI", () => {
     expect(reminderPush(emi, at11("2026-09-04")).tag).toBe(reminderPush(emi, at11("2026-09-06")).tag);
     expect(reminderPush(emi, at11("2026-09-04")).title).toBe("EMI due in 2 days");
     expect(reminderPush(emi, at11("2026-09-06")).title).toBe("EMI due TODAY");
+  });
+});
+
+describe("monthly EMIs", () => {
+  it("keeps the same day each month", () => {
+    expect(addMonthsYmd("2026-09-06", 1)).toBe("2026-10-06");
+    expect(addMonthsYmd("2026-09-06", 4)).toBe("2027-01-06");
+    expect(addMonthsYmd("2026-09-06", 12)).toBe("2027-09-06");
+  });
+
+  it("clamps to the end of short months without drifting after", () => {
+    // A 31st EMI lands on 28 Feb, then returns to the 31st — it must not walk
+    // backwards to the 28th for the rest of the loan.
+    expect(addMonthsYmd("2027-01-31", 1)).toBe("2027-02-28");
+    expect(addMonthsYmd("2027-01-31", 2)).toBe("2027-03-31");
+    expect(addMonthsYmd("2027-01-31", 3)).toBe("2027-04-30");
+    // Leap year.
+    expect(addMonthsYmd("2028-01-31", 1)).toBe("2028-02-29");
+  });
+
+  it("expands a run starting at the given date", () => {
+    expect(expandMonthly("2026-09-06", 1)).toEqual(["2026-09-06"]);
+    expect(expandMonthly("2026-09-06", 4)).toEqual([
+      "2026-09-06", "2026-10-06", "2026-11-06", "2026-12-06",
+    ]);
+    expect(expandMonthly("2026-09-06", 36)).toHaveLength(36);
+  });
+
+  it("never generates more than the cap", () => {
+    expect(expandMonthly("2026-09-06", 5000)).toHaveLength(MAX_REPEAT_MONTHS);
+    expect(expandMonthly("2026-09-06", 0)).toHaveLength(1);
+  });
+
+  it("reads the optional 4th column as a count or an end date", () => {
+    expect(parseRepeat("", "2026-09-06")).toBe(1);
+    expect(parseRepeat("36", "2026-09-06")).toBe(36);
+    expect(parseRepeat("36 months", "2026-09-06")).toBe(36);
+    // Sep 2026 through Aug 2029 inclusive = 36 installments.
+    expect(parseRepeat("06/08/2029", "2026-09-06")).toBe(36);
+    expect(parseRepeat("06/09/2026", "2026-09-06")).toBe(1);
+  });
+
+  it("rejects an unreadable or out-of-range repeat", () => {
+    expect(parseRepeat("lots", "2026-09-06")).toBeNull();
+    expect(parseRepeat("999", "2026-09-06")).toBeNull();
+    expect(parseRepeat("0", "2026-09-06")).toBeNull();
+    // An end date before the start is not a run.
+    expect(parseRepeat("06/08/2025", "2026-09-06")).toBeNull();
+  });
+
+  it("carries the repeat through CSV parsing", () => {
+    const { rows, errors } = parseReminderCsv(
+      "06/09/2026,Car loan EMI,45000,36\n10/09/2026,Office rent,120000",
+    );
+    expect(errors).toEqual([]);
+    expect(rows[0].repeatMonths).toBe(36);
+    expect(rows[1].repeatMonths).toBe(1); // blank 4th column = one-off
   });
 });

@@ -264,12 +264,17 @@ model Reminder {
   createdById String
   createdBy   User   @relation("reminderCreatedBy", fields: [createdById], references: [id])
 
+  // Rows generated from one "repeats monthly" entry share a seriesId, so the
+  // whole run can be cancelled without deleting 36 rows by hand.
+  seriesId String?
+
   lastRemindedAt DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
   @@index([status, dueDate])
   @@index([dueDate])
+  @@index([seriesId])
 }
 
 model IdempotencyKey {
