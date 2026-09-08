@@ -365,10 +365,31 @@ a{color:inherit}
 .remmeta{font-size:11.5px;color:var(--ink-3);margin-top:3px}
 .remnote{font-size:11.5px;color:var(--ink-2);margin-top:4px;font-style:italic}
 .remtag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.02em;background:var(--brand-soft);color:var(--brand-ink);vertical-align:1px}
-.remcheck{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:600;color:var(--ink);cursor:pointer;margin-bottom:0}
-.remcheck input{width:17px;height:17px;flex:none;accent-color:var(--brand);padding:0}
-.remmonths{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13.5px;color:var(--ink-2)}
-.remmonths input{width:78px;text-align:center;font-family:'Space Grotesk';font-weight:600;font-size:16px}
+.remtag.alt{background:var(--sched-soft);color:var(--sched)}
+/* 8 across keeps the clock three rows tall instead of four. */
+.hourgrid{display:grid;grid-template-columns:repeat(8,1fr);gap:4px}
+.hourcell{padding:7px 0;border-radius:8px;border:1px solid var(--line-2);background:var(--surface-2);color:var(--ink-3);font-size:11.5px;font-weight:600;font-family:'Space Grotesk';transition:.12s}
+.hourcell:hover{border-color:var(--brand);color:var(--brand-ink);background:var(--surface)}
+.hourcell.on{background:var(--brand);border-color:var(--brand);color:#fff}
+
+/* `.fld label` is (0,1,1) and would otherwise beat a bare `.remcheck`,
+   forcing display:block and killing the flex gap. */
+.fld label.remcheck{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:600;color:var(--ink);cursor:pointer;margin-bottom:0;padding:2px 0}
+.fld label.remcheck input{width:17px;height:17px;flex:none;accent-color:var(--brand);padding:0;margin:0}
+
+/* Everything revealed by a checkbox is indented and ruled, so it reads as
+   belonging to that checkbox rather than as the next question. */
+.timingtabs{display:flex;gap:5px;padding:4px;background:var(--surface-2);border:1px solid var(--line-2);border-radius:12px}
+.timingtabs button{flex:1;padding:9px 0;border-radius:9px;font-size:13px;font-weight:600;color:var(--ink-2);background:none;transition:.14s}
+.timingtabs button:hover{color:var(--ink)}
+.timingtabs button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(16,32,46,.10)}
+.subfld{margin-top:12px;padding-left:14px;border-left:2px solid var(--line-2)}
+.subfld .fld{margin-top:14px}
+.subfld .fld label{margin-bottom:8px}
+.subfld > .amtwords{margin-top:9px}
+
+.remmonths{display:flex;align-items:center;gap:9px;margin-top:2px;font-size:13.5px;color:var(--ink-2)}
+.remmonths input{width:88px;text-align:center;font-family:'Space Grotesk';font-weight:600;font-size:16px;padding:10px 12px}
 .remright{display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex:none}
 .remamt{font-size:15px;font-weight:700;color:var(--ink);white-space:nowrap}
 .rembtns{display:flex;gap:5px;align-items:center}

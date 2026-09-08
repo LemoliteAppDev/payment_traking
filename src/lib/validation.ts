@@ -78,12 +78,29 @@ export const createReminderSchema = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dueDate must be YYYY-MM-DD"),
   // 1 = one-off. Above that, one dated row per month (10 years max).
   repeatMonths: z.number().int().min(1).max(120).optional().default(1),
+  // Per-EMI timing. Omit to inherit the house default; null clears an override.
+  sendHours: z.array(z.number().int().min(0).max(23)).min(1).max(24).nullish(),
+  leadDays: z.number().int().min(0).max(60).nullish(),
 });
 
 export const updateReminderSchema = z.object({
   description: z.string().trim().min(1).max(500).optional(),
   amount: paise.optional(),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dueDate must be YYYY-MM-DD").optional(),
+  sendHours: z.array(z.number().int().min(0).max(23)).min(1).max(24).nullish(),
+  leadDays: z.number().int().min(0).max(60).nullish(),
+});
+
+// One person's own timing. Nulls mean "follow the group".
+export const myTimingSchema = z.object({
+  sendHours: z.array(z.number().int().min(0).max(23)).min(1).max(24).nullable(),
+  leadDays: z.number().int().min(0).max(60).nullable(),
+});
+
+// House defaults, manager-editable.
+export const reminderSettingsSchema = z.object({
+  sendHours: z.array(z.number().int().min(0).max(23)).min(1, "Pick at least one time").max(24),
+  leadDays: z.number().int().min(0).max(60),
 });
 
 export const markReminderPaidSchema = z.object({

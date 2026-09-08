@@ -82,6 +82,8 @@ model User {
 
   remindersAdded Reminder[] @relation("reminderCreatedBy")
   remindersPaid  Reminder[] @relation("reminderPaidBy")
+  reminderPreference    ReminderPreference?
+  reminderNotifications ReminderNotification[]
 
   accounts          Account[]
   sessions          Session[]
@@ -268,13 +270,58 @@ model Reminder {
   // whole run can be cancelled without deleting 36 rows by hand.
   seriesId String?
 
+  // Per-EMI timing. Null on either means "use the house default"
+  // (ReminderSetting), so changing the default moves every inheriting row.
+  sendHours String? // comma-separated hours in APP_TZ, e.g. "11,21"
+  leadDays  Int? // how many days before the due date reminders start
+
+  // Kept for display ("last reminded"). De-duplication is per person, in
+  // ReminderNotification — a shared stamp would let the first recipient's send
+  // suppress everyone else's when their schedules differ.
   lastRemindedAt DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  notifications ReminderNotification[]
+
   @@index([status, dueDate])
   @@index([dueDate])
   @@index([seriesId])
+}
+
+// House defaults for EMI reminders, editable in-app by the manager. A single
+// row, id "default". Reminders with their own sendHours/leadDays ignore it.
+// Falls back to EMI_REMINDER_HOURS / 3 when the row is missing.
+model ReminderSetting {
+  id          String   @id @default("default")
+  sendHours   String   @default("11,21")
+  leadDays    Int      @default(3)
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
+
+// One person's own reminder timing. Null on a field means "follow the group"
+// (ReminderSetting). Each of the three sets their own.
+model ReminderPreference {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sendHours String?
+  leadDays  Int?
+  updatedAt DateTime @updatedAt
+}
+
+// When each person was last told about each reminder. Per-person because the
+// three can be on different schedules for the same EMI.
+model ReminderNotification {
+  id         String   @id @default(cuid())
+  reminderId String
+  reminder   Reminder @relation(fields: [reminderId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sentAt     DateTime
+
+  @@unique([reminderId, userId])
+  @@index([userId])
 }
 
 model IdempotencyKey {
