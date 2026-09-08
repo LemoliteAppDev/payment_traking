@@ -13,6 +13,8 @@ export const PATCH = route(async (req: Request, ctx: { params: Promise<{ id: str
     ...(body.description !== undefined ? { description: body.description } : {}),
     ...(body.amount !== undefined ? { amount: body.amount } : {}),
     ...(body.dueDate !== undefined ? { dueDate: ymdToDate(body.dueDate) } : {}),
+    ...(body.sendHours !== undefined ? { sendHours: body.sendHours } : {}),
+    ...(body.leadDays !== undefined ? { leadDays: body.leadDays } : {}),
   });
   return json({ reminder });
 });

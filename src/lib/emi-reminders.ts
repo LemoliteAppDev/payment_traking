@@ -15,17 +15,156 @@ import { formatINR } from "@/lib/money";
 import { hourInTz, ymdInTz } from "@/lib/time";
 import type { SessionUser } from "@/lib/session";
 
-/** Reminders start this many days before the due date (6th → 3rd, 4th, 5th, 6th). */
+/**
+ * Fallback lead: reminders start this many days before the due date
+ * (due the 6th → 3rd, 4th, 5th, 6th). Overridden by the ReminderSetting row,
+ * and per-EMI by Reminder.leadDays.
+ */
 export const LEAD_DAYS = 3;
+export const MAX_LEAD_DAYS = 60;
 
-/** Hours (APP_TZ) at which the digest goes out. */
-function reminderHours(): number[] {
-  const raw = process.env.EMI_REMINDER_HOURS ?? "11,21";
-  const hours = raw
-    .split(",")
-    .map((h) => Number(h.trim()))
-    .filter((h) => Number.isInteger(h) && h >= 0 && h <= 23);
-  return hours.length ? hours : [11, 21];
+/**
+ * Parse "11,21" into [11, 21]. Invalid entries are dropped; null if none
+ * survive. Matches digits explicitly rather than leaning on Number(), because
+ * Number("") is 0 — a blank cell would otherwise silently mean midnight.
+ */
+export function parseHours(raw: string): number[] | null {
+  const hours = [
+    ...new Set(
+      raw
+        .split(",")
+        .map((h) => h.trim())
+        .filter((h) => /^\d{1,2}$/.test(h))
+        .map(Number)
+        .filter((h) => h <= 23),
+    ),
+  ].sort((a, b) => a - b);
+  return hours.length ? hours : null;
+}
+
+export const formatHours = (hours: number[]): string => hours.join(",");
+
+/** Last-resort hours when neither the settings row nor a valid env var exists. */
+function envHours(): number[] {
+  return parseHours(process.env.EMI_REMINDER_HOURS ?? "11,21") ?? [11, 21];
+}
+
+export interface ReminderDefaults {
+  sendHours: number[];
+  leadDays: number;
+}
+
+/** The house default, from the singleton settings row. */
+export async function getReminderDefaults(): Promise<ReminderDefaults> {
+  const row = await prisma.reminderSetting.findUnique({ where: { id: "default" } });
+  if (!row) return { sendHours: envHours(), leadDays: LEAD_DAYS };
+  return {
+    sendHours: parseHours(row.sendHours) ?? envHours(),
+    leadDays: row.leadDays,
+  };
+}
+
+/** Manager only, enforced at the route. */
+export async function setReminderDefaults(
+  input: { sendHours: number[]; leadDays: number },
+  user: SessionUser,
+): Promise<ReminderDefaults> {
+  const row = await prisma.reminderSetting.upsert({
+    where: { id: "default" },
+    update: { sendHours: formatHours(input.sendHours), leadDays: input.leadDays, updatedById: user.id },
+    create: {
+      id: "default",
+      sendHours: formatHours(input.sendHours),
+      leadDays: input.leadDays,
+      updatedById: user.id,
+    },
+  });
+  return { sendHours: parseHours(row.sendHours) ?? envHours(), leadDays: row.leadDays };
+}
+
+/** What applies to one reminder before any person's own preference. */
+export function effectiveTiming(
+  r: { sendHours: string | null; leadDays: number | null },
+  defaults: ReminderDefaults,
+): ReminderDefaults & { custom: boolean } {
+  const own = r.sendHours ? parseHours(r.sendHours) : null;
+  return {
+    sendHours: own ?? defaults.sendHours,
+    leadDays: r.leadDays ?? defaults.leadDays,
+    custom: !!own || r.leadDays !== null,
+  };
+}
+
+export interface PersonPreference {
+  sendHours: string | null;
+  leadDays: number | null;
+}
+
+/**
+ * Timing for one person on one reminder.
+ *
+ * Lead days: the **longer** of the person's own lead and the EMI's, so nobody
+ * gets less warning than the EMI demands, and anyone who asked for more still
+ * gets more. Jignesh on 4 days and a group on 2 means he hears first.
+ *
+ * Hours: the person's own times, plus any the EMI insists on. Union for the
+ * same reason — an EMI pinned to 07:00 still lands at 07:00 for everyone.
+ */
+export function timingFor(
+  r: { sendHours: string | null; leadDays: number | null },
+  pref: PersonPreference | undefined,
+  group: ReminderDefaults,
+): ReminderDefaults {
+  const personLead = pref?.leadDays ?? group.leadDays;
+  const personHours = (pref?.sendHours ? parseHours(pref.sendHours) : null) ?? group.sendHours;
+
+  const emiLead = r.leadDays;
+  const emiHours = r.sendHours ? parseHours(r.sendHours) : null;
+
+  return {
+    leadDays: emiLead === null ? personLead : Math.max(personLead, emiLead),
+    sendHours: emiHours
+      ? [...new Set([...personHours, ...emiHours])].sort((a, b) => a - b)
+      : personHours,
+  };
+}
+
+/** Everyone's saved preference, keyed by user id. */
+export async function getPreferences(): Promise<Map<string, PersonPreference>> {
+  const rows = await prisma.reminderPreference.findMany();
+  return new Map(rows.map((r) => [r.userId, { sendHours: r.sendHours, leadDays: r.leadDays }]));
+}
+
+/** One person's own row, plus what it resolves to against the group setting. */
+export async function getMyTiming(user: SessionUser) {
+  const [pref, group] = await Promise.all([
+    prisma.reminderPreference.findUnique({ where: { userId: user.id } }),
+    getReminderDefaults(),
+  ]);
+  const own = pref ? { sendHours: pref.sendHours, leadDays: pref.leadDays } : undefined;
+  return {
+    group,
+    followsGroup: !pref || (pref.sendHours === null && pref.leadDays === null),
+    mine: {
+      sendHours: (own?.sendHours ? parseHours(own.sendHours) : null) ?? group.sendHours,
+      leadDays: own?.leadDays ?? group.leadDays,
+    },
+  };
+}
+
+/** Each of the three sets their own. Null on both fields means follow the group. */
+export async function setMyTiming(
+  user: SessionUser,
+  input: { sendHours: number[] | null; leadDays: number | null },
+) {
+  const sendHours = input.sendHours?.length ? formatHours(input.sendHours) : null;
+  const leadDays = input.leadDays ?? null;
+  await prisma.reminderPreference.upsert({
+    where: { userId: user.id },
+    update: { sendHours, leadDays },
+    create: { userId: user.id, sendHours, leadDays },
+  });
+  return getMyTiming(user);
 }
 
 // Long enough to collapse the four cron ticks inside one hour into a single
@@ -69,9 +208,9 @@ export function daysUntilDue(due: Date, now: Date = new Date()): number {
   return daysBetweenYmd(ymdInTz(now), dueYmd(due));
 }
 
-/** In the reminder window: due within LEAD_DAYS, or already past due. */
-export function isDueForReminder(due: Date, now: Date = new Date()): boolean {
-  return daysUntilDue(due, now) <= LEAD_DAYS;
+/** In the reminder window: due within `leadDays`, or already past due. */
+export function isDueForReminder(due: Date, now: Date = new Date(), leadDays = LEAD_DAYS): boolean {
+  return daysUntilDue(due, now) <= leadDays;
 }
 
 /** 'YYYY-MM-DD' -> the UTC-midnight Date we store. */
@@ -116,14 +255,15 @@ export function monthsBetweenYmd(fromYmd: string, toYmd: string): number {
 // ── shaping ─────────────────────────────────────────────────────────
 type ReminderRow = {
   id: string; description: string; amount: bigint; dueDate: Date; status: "PENDING" | "PAID";
-  seriesId: string | null;
+  seriesId: string | null; sendHours: string | null; leadDays: number | null;
   paidOn: Date | null; paidAt: Date | null; paidNote: string | null; createdAt: Date;
   createdBy: { id: string; name: string } | null;
   paidBy: { id: string; name: string } | null;
 };
 
-function shape(r: ReminderRow) {
+function shape(r: ReminderRow, defaults: ReminderDefaults) {
   const days = daysUntilDue(r.dueDate);
+  const timing = effectiveTiming(r, defaults);
   return {
     id: r.id,
     description: r.description,
@@ -134,7 +274,10 @@ function shape(r: ReminderRow) {
     monthly: !!r.seriesId,
     daysUntilDue: days,
     late: r.status === "PENDING" && days < 0,
-    inWindow: r.status === "PENDING" && days <= LEAD_DAYS,
+    inWindow: r.status === "PENDING" && days <= timing.leadDays,
+    sendHours: timing.sendHours,
+    leadDays: timing.leadDays,
+    customTiming: timing.custom,
     paidOn: r.paidOn ? dueYmd(r.paidOn) : null,
     paidAt: r.paidAt?.toISOString() ?? null,
     paidNote: r.paidNote ?? "",
@@ -152,11 +295,11 @@ const include = {
 
 // ── CRUD ────────────────────────────────────────────────────────────
 export async function listReminders(): Promise<ReminderDTO[]> {
-  const rows = await prisma.reminder.findMany({
-    orderBy: [{ status: "asc" }, { dueDate: "asc" }],
-    include,
-  });
-  return rows.map(shape);
+  const [rows, defaults] = await Promise.all([
+    prisma.reminder.findMany({ orderBy: [{ status: "asc" }, { dueDate: "asc" }], include }),
+    getReminderDefaults(),
+  ]);
+  return rows.map((r) => shape(r, defaults));
 }
 
 export interface ReminderInput {
@@ -165,6 +308,9 @@ export interface ReminderInput {
   dueDate: Date;
   /** 1 = a one-off. Above that, one dated row per month sharing a seriesId. */
   repeatMonths?: number;
+  /** Per-EMI timing. Undefined leaves it inheriting the house default. */
+  sendHours?: number[] | null;
+  leadDays?: number | null;
 }
 
 export async function createReminder(input: ReminderInput, user: SessionUser): Promise<ReminderDTO> {
@@ -178,12 +324,14 @@ export async function createReminder(input: ReminderInput, user: SessionUser): P
     dueDate: ymdToDate(ymd),
     createdById: user.id,
     seriesId,
+    sendHours: input.sendHours?.length ? formatHours(input.sendHours) : null,
+    leadDays: input.leadDays ?? null,
   }));
 
   // Return the first installment — that's the one the UI just added.
   const first = await prisma.reminder.create({ data: rows[0], include });
   if (rows.length > 1) await prisma.reminder.createMany({ data: rows.slice(1) });
-  return shape(first);
+  return shape(first, await getReminderDefaults());
 }
 
 export async function updateReminder(id: string, input: Partial<ReminderInput>): Promise<ReminderDTO> {
@@ -196,10 +344,15 @@ export async function updateReminder(id: string, input: Partial<ReminderInput>):
       ...(input.amount !== undefined ? { amount: input.amount } : {}),
       // Editing the due date reopens the reminder window, so clear the stamp.
       ...(input.dueDate !== undefined ? { dueDate: input.dueDate, lastRemindedAt: null } : {}),
+      // null explicitly clears an override back to the house default.
+      ...(input.sendHours !== undefined
+        ? { sendHours: input.sendHours?.length ? formatHours(input.sendHours) : null, lastRemindedAt: null }
+        : {}),
+      ...(input.leadDays !== undefined ? { leadDays: input.leadDays, lastRemindedAt: null } : {}),
     },
     include,
   });
-  return shape(r);
+  return shape(r, await getReminderDefaults());
 }
 
 /**
@@ -236,7 +389,7 @@ export async function markReminderPaid(
   if (existing.status === "PAID") {
     // Idempotent: a second tap from another phone shouldn't overwrite the first.
     const r = await prisma.reminder.findUnique({ where: { id }, include });
-    return shape(r as ReminderRow);
+    return shape(r as ReminderRow, await getReminderDefaults());
   }
   const r = await prisma.reminder.update({
     where: { id },
@@ -249,7 +402,7 @@ export async function markReminderPaid(
     },
     include,
   });
-  return shape(r);
+  return shape(r, await getReminderDefaults());
 }
 
 /** Undo a wrong "paid" mark — manager only, enforced at the route. */
@@ -263,7 +416,7 @@ export async function unmarkReminderPaid(id: string): Promise<ReminderDTO> {
     .catch(() => {
       throw new ApiError(404, "NOT_FOUND", "Reminder not found.");
     });
-  return shape(r);
+  return shape(r, await getReminderDefaults());
 }
 
 // ── CSV import ──────────────────────────────────────────────────────
@@ -273,6 +426,8 @@ export interface ParsedRow {
   description: string;
   amount: string; // paise
   repeatMonths: number; // 1 = one-off
+  leadDays: number | null; // null = inherit the house default
+  sendHours: number[] | null; // null = inherit
 }
 export interface RowError {
   line: number;
@@ -432,7 +587,30 @@ export function parseReminderCsv(text: string): ParseResult {
       });
       return;
     }
-    rows.push({ line, dueDate, description, amount: amount.toString(), repeatMonths });
+
+    // Columns 5 and 6 are optional per-row timing; blank inherits the default.
+    const leadCell = (cells[4] ?? "").trim();
+    let leadDays: number | null = null;
+    if (leadCell) {
+      const n = Number(leadCell.replace(/\s*days?\s*$/i, "").trim());
+      if (!Number.isInteger(n) || n < 0 || n > MAX_LEAD_DAYS) {
+        errors.push({ line, raw, message: `Can't read the lead days "${leadCell}". Use 0 to ${MAX_LEAD_DAYS}.` });
+        return;
+      }
+      leadDays = n;
+    }
+
+    const hoursCell = (cells[5] ?? "").trim();
+    let sendHours: number[] | null = null;
+    if (hoursCell) {
+      sendHours = parseHours(hoursCell);
+      if (!sendHours) {
+        errors.push({ line, raw, message: `Can't read the send times "${hoursCell}". Use hours 0-23, e.g. 11,21.` });
+        return;
+      }
+    }
+
+    rows.push({ line, dueDate, description, amount: amount.toString(), repeatMonths, leadDays, sendHours });
   });
 
   return { rows, errors };
@@ -479,6 +657,8 @@ export async function importReminders(text: string, user: SessionUser, dryRun: b
           dueDate: ymdToDate(ymd),
           createdById: user.id,
           seriesId,
+          sendHours: r.sendHours?.length ? formatHours(r.sendHours) : null,
+          leadDays: r.leadDays,
         }));
       }),
     });
@@ -533,42 +713,66 @@ export function reminderPush(
  * it decides for itself whether this tick is a send tick.
  */
 export async function runEmiReminders(now: Date = new Date()): Promise<EmiReminderResult> {
-  if (!reminderHours().includes(hourInTz(now))) {
-    return { ok: true, skipped: "not-a-reminder-hour" };
-  }
+  const hour = hourInTz(now);
+  const [pending, group, prefs, recipients] = await Promise.all([
+    prisma.reminder.findMany({ where: { status: "PENDING" }, orderBy: { dueDate: "asc" } }),
+    getReminderDefaults(),
+    getPreferences(),
+    prisma.user.findMany({
+      where: { active: true, OR: [{ isManager: true }, { isApprover: true }, { isPayer: true }] },
+      select: { id: true },
+    }),
+  ]);
+  if (pending.length === 0) return { ok: true, reminders: 0, recipients: 0, pushes: 0 };
 
-  const pending = await prisma.reminder.findMany({
-    where: { status: "PENDING" },
-    orderBy: { dueDate: "asc" },
+  // Who was last told what. Per person, because the three can be on different
+  // schedules for the same EMI.
+  const sent = await prisma.reminderNotification.findMany({
+    where: { reminderId: { in: pending.map((r) => r.id) } },
   });
-
+  const lastSent = new Map(sent.map((n) => [`${n.reminderId}:${n.userId}`, n.sentAt]));
   const cutoff = new Date(now.getTime() - DEDUPE_MS);
-  const due = pending.filter(
-    (r) => isDueForReminder(r.dueDate, now) && (!r.lastRemindedAt || r.lastRemindedAt < cutoff),
-  );
-  if (due.length === 0) return { ok: true, reminders: 0, recipients: 0, pushes: 0 };
 
-  const recipients = await prisma.user.findMany({
-    where: { active: true, OR: [{ isManager: true }, { isApprover: true }, { isPayer: true }] },
-    select: { id: true },
-  });
+  // Soonest-due last, so the most urgent EMI lands on top of the stack.
+  const ordered = [...pending].sort((a, b) => daysUntilDue(b.dueDate, now) - daysUntilDue(a.dueDate, now));
 
-  // Soonest first, so the most urgent EMI is the last one to land on the phone
-  // (newest notification sits on top).
-  const ordered = [...due].sort((a, b) => daysUntilDue(b.dueDate, now) - daysUntilDue(a.dueDate, now));
-  let pushes = 0;
+  const toSend: { reminder: (typeof pending)[number]; userId: string }[] = [];
   for (const r of ordered) {
-    const payload = reminderPush(r, now);
     for (const u of recipients) {
-      await sendPushToUser(u.id, payload);
-      pushes++;
+      const timing = timingFor(r, prefs.get(u.id), group);
+      if (!timing.sendHours.includes(hour)) continue;
+      if (!isDueForReminder(r.dueDate, now, timing.leadDays)) continue;
+      const last = lastSent.get(`${r.id}:${u.id}`);
+      if (last && last >= cutoff) continue;
+      toSend.push({ reminder: r, userId: u.id });
     }
   }
 
-  await prisma.reminder.updateMany({
-    where: { id: { in: due.map((r) => r.id) } },
-    data: { lastRemindedAt: now },
-  });
+  if (toSend.length === 0) {
+    // Tell "nothing is scheduled for this hour" apart from "nothing is due".
+    const anyHour = pending.some((r) =>
+      recipients.some((u) => timingFor(r, prefs.get(u.id), group).sendHours.includes(hour)),
+    );
+    if (!anyHour) return { ok: true, skipped: "not-a-reminder-hour" };
+    return { ok: true, reminders: 0, recipients: 0, pushes: 0 };
+  }
 
-  return { ok: true, reminders: due.length, recipients: recipients.length, pushes };
+  for (const { reminder, userId } of toSend) {
+    await sendPushToUser(userId, reminderPush(reminder, now));
+    await prisma.reminderNotification.upsert({
+      where: { reminderId_userId: { reminderId: reminder.id, userId } },
+      update: { sentAt: now },
+      create: { reminderId: reminder.id, userId, sentAt: now },
+    });
+  }
+
+  const reminderIds = [...new Set(toSend.map((t) => t.reminder.id))];
+  await prisma.reminder.updateMany({ where: { id: { in: reminderIds } }, data: { lastRemindedAt: now } });
+
+  return {
+    ok: true,
+    reminders: reminderIds.length,
+    recipients: new Set(toSend.map((t) => t.userId)).size,
+    pushes: toSend.length,
+  };
 }

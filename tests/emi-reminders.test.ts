@@ -13,6 +13,10 @@ import {
   parseRepeat,
   LEAD_DAYS,
   MAX_REPEAT_MONTHS,
+  parseHours,
+  formatHours,
+  effectiveTiming,
+  timingFor,
 } from "@/lib/emi-reminders";
 
 describe("parseDueDate", () => {
@@ -68,8 +72,8 @@ describe("parseReminderCsv", () => {
     const { rows, errors } = parseReminderCsv(csv);
     expect(errors).toEqual([]);
     expect(rows).toEqual([
-      { line: 2, dueDate: "2026-09-06", description: "Car loan EMI — HDFC", amount: "4500000", repeatMonths: 1 },
-      { line: 3, dueDate: "2026-09-10", description: "Office rent", amount: "12000000", repeatMonths: 1 },
+      { line: 2, dueDate: "2026-09-06", description: "Car loan EMI — HDFC", amount: "4500000", repeatMonths: 1, leadDays: null, sendHours: null },
+      { line: 3, dueDate: "2026-09-10", description: "Office rent", amount: "12000000", repeatMonths: 1, leadDays: null, sendHours: null },
     ]);
   });
 
@@ -224,5 +228,155 @@ describe("monthly EMIs", () => {
     expect(errors).toEqual([]);
     expect(rows[0].repeatMonths).toBe(36);
     expect(rows[1].repeatMonths).toBe(1); // blank 4th column = one-off
+  });
+});
+
+describe("manager-managed timing", () => {
+  const DEFAULTS = { sendHours: [11, 21], leadDays: 3 };
+
+  it("parses, de-duplicates and sorts hours", () => {
+    expect(parseHours("11,21")).toEqual([11, 21]);
+    expect(parseHours("21, 11")).toEqual([11, 21]);
+    expect(parseHours("9,9,18")).toEqual([9, 18]);
+    expect(parseHours("0,23")).toEqual([0, 23]);
+  });
+
+  it("rejects hours outside a clock", () => {
+    expect(parseHours("24")).toBeNull();
+    expect(parseHours("-1")).toBeNull();
+    expect(parseHours("noon")).toBeNull();
+    expect(parseHours("")).toBeNull();
+    // A valid hour beside junk keeps the valid one rather than failing the row.
+    expect(parseHours("11,noon")).toEqual([11]);
+  });
+
+  it("round-trips through the stored string", () => {
+    expect(formatHours([11, 21])).toBe("11,21");
+    expect(parseHours(formatHours([9, 18]))).toEqual([9, 18]);
+  });
+
+  it("inherits the default when a reminder sets nothing", () => {
+    const t = effectiveTiming({ sendHours: null, leadDays: null }, DEFAULTS);
+    expect(t).toEqual({ sendHours: [11, 21], leadDays: 3, custom: false });
+  });
+
+  it("lets one EMI override either half on its own", () => {
+    expect(effectiveTiming({ sendHours: "9", leadDays: null }, DEFAULTS)).toEqual({
+      sendHours: [9], leadDays: 3, custom: true,
+    });
+    expect(effectiveTiming({ sendHours: null, leadDays: 7 }, DEFAULTS)).toEqual({
+      sendHours: [11, 21], leadDays: 7, custom: true,
+    });
+  });
+
+  it("treats leadDays 0 as a real override, not as absent", () => {
+    // 0 is falsy — the bug this guards is `r.leadDays || defaults.leadDays`,
+    // which would silently turn "remind on the day only" back into 3 days.
+    const t = effectiveTiming({ sendHours: null, leadDays: 0 }, DEFAULTS);
+    expect(t.leadDays).toBe(0);
+    expect(t.custom).toBe(true);
+  });
+
+  it("falls back to the default when a stored override is corrupt", () => {
+    const t = effectiveTiming({ sendHours: "garbage", leadDays: null }, DEFAULTS);
+    expect(t.sendHours).toEqual([11, 21]);
+  });
+
+  it("honours a custom lead when deciding the window", () => {
+    const due = ymdToDate("2026-09-10");
+    const on = (ymd: string) => new Date(`${ymd}T05:30:00Z`);
+    // 3-day default: silent on the 5th.
+    expect(isDueForReminder(due, on("2026-09-05"), 3)).toBe(false);
+    // 7-day override: already reminding.
+    expect(isDueForReminder(due, on("2026-09-05"), 7)).toBe(true);
+    // 0-day: only from the due date itself.
+    expect(isDueForReminder(due, on("2026-09-09"), 0)).toBe(false);
+    expect(isDueForReminder(due, on("2026-09-10"), 0)).toBe(true);
+  });
+
+  it("reads per-row timing from the 5th and 6th CSV columns", () => {
+    const { rows, errors } = parseReminderCsv(
+      '06/09/2026,Car loan,45000,36,5,"9,18"\n10/09/2026,Office rent,120000',
+    );
+    expect(errors).toEqual([]);
+    expect(rows[0].leadDays).toBe(5);
+    expect(rows[0].sendHours).toEqual([9, 18]);
+    // Blank columns inherit rather than defaulting to something concrete.
+    expect(rows[1].leadDays).toBeNull();
+    expect(rows[1].sendHours).toBeNull();
+  });
+
+  it("reports a bad timing column by line instead of guessing", () => {
+    const bad = parseReminderCsv("06/09/2026,Car loan,45000,1,99");
+    expect(bad.rows).toEqual([]);
+    expect(bad.errors[0].message).toMatch(/lead days/i);
+
+    const badHours = parseReminderCsv("06/09/2026,Car loan,45000,1,3,midnight");
+    expect(badHours.rows).toEqual([]);
+    expect(badHours.errors[0].message).toMatch(/send times/i);
+  });
+});
+
+describe("per-person timing", () => {
+  const GROUP = { sendHours: [11, 21], leadDays: 2 };
+  const noEmiTiming = { sendHours: null, leadDays: null };
+
+  it("follows the group when a person has no preference", () => {
+    expect(timingFor(noEmiTiming, undefined, GROUP)).toEqual(GROUP);
+    // A row that exists but sets nothing is the same as no row.
+    expect(timingFor(noEmiTiming, { sendHours: null, leadDays: null }, GROUP)).toEqual(GROUP);
+  });
+
+  it("gives each person their own schedule for the same EMI", () => {
+    // Jignesh wants 4 days; the group is on 2.
+    const jignesh = timingFor(noEmiTiming, { sendHours: null, leadDays: 4 }, GROUP);
+    const mahesh = timingFor(noEmiTiming, undefined, GROUP);
+    expect(jignesh.leadDays).toBe(4);
+    expect(mahesh.leadDays).toBe(2);
+  });
+
+  it("takes the longer lead when the EMI also demands notice", () => {
+    const emi10 = { sendHours: null, leadDays: 10 };
+    // The EMI wins where it asks for more...
+    expect(timingFor(emi10, { sendHours: null, leadDays: 2 }, GROUP).leadDays).toBe(10);
+    // ...and the person wins where they asked for more.
+    expect(timingFor({ sendHours: null, leadDays: 1 }, { sendHours: null, leadDays: 7 }, GROUP).leadDays).toBe(7);
+    // Nobody ever ends up with less warning than either side asked for.
+    expect(timingFor(emi10, undefined, GROUP).leadDays).toBe(10);
+  });
+
+  it("keeps leadDays 0 as a real choice on both sides", () => {
+    expect(timingFor(noEmiTiming, { sendHours: null, leadDays: 0 }, GROUP).leadDays).toBe(0);
+    // An EMI pinned to 0 must not drag a person below their own lead.
+    expect(timingFor({ sendHours: null, leadDays: 0 }, { sendHours: null, leadDays: 5 }, GROUP).leadDays).toBe(5);
+  });
+
+  it("uses the person's hours, adding any the EMI insists on", () => {
+    const mine = { sendHours: "9", leadDays: null };
+    expect(timingFor(noEmiTiming, mine, GROUP).sendHours).toEqual([9]);
+    // An EMI pinned to 07:00 reaches them at 07:00 as well as their own 09:00.
+    expect(timingFor({ sendHours: "7", leadDays: null }, mine, GROUP).sendHours).toEqual([7, 9]);
+    // No duplicate when they already share an hour.
+    expect(timingFor({ sendHours: "9", leadDays: null }, mine, GROUP).sendHours).toEqual([9]);
+  });
+
+  it("falls back to the group when a stored preference is corrupt", () => {
+    const t = timingFor(noEmiTiming, { sendHours: "garbage", leadDays: null }, GROUP);
+    expect(t.sendHours).toEqual([11, 21]);
+  });
+
+  it("puts Jignesh ahead of the others on the same EMI", () => {
+    // The worked example: due the 10th, group on 2 days, Jignesh on 4.
+    const due = ymdToDate("2026-09-10");
+    const on = (ymd: string) => new Date(`${ymd}T05:30:00Z`);
+    const jignesh = timingFor(noEmiTiming, { sendHours: null, leadDays: 4 }, GROUP);
+    const others = timingFor(noEmiTiming, undefined, GROUP);
+
+    // On the 6th only Jignesh is in range.
+    expect(isDueForReminder(due, on("2026-09-06"), jignesh.leadDays)).toBe(true);
+    expect(isDueForReminder(due, on("2026-09-06"), others.leadDays)).toBe(false);
+    // By the 8th everyone is.
+    expect(isDueForReminder(due, on("2026-09-08"), jignesh.leadDays)).toBe(true);
+    expect(isDueForReminder(due, on("2026-09-08"), others.leadDays)).toBe(true);
   });
 });

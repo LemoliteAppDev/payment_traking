@@ -2,8 +2,8 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  api, fmtPaise, wordsFromRupees, isoDay, colorFor, initials,
-  type MeUser, type Reminder, type ReminderImportResult,
+  api, fmtPaise, wordsFromRupees, isoDay, colorFor, initials, fmtHours,
+  type MeUser, type Reminder, type ReminderImportResult, type ReminderDefaults, type MyTiming,
 } from "@/lib/client";
 
 /* EMI reminders tab. Only Jignesh (manager), Jagat (approver) and Mahesh
@@ -12,6 +12,7 @@ import {
    stops the reminders immediately. */
 
 const IcPlus = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M12 5v14M5 12h14" /></svg>);
+const IcClock = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>);
 const IcSheet = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M4 4h16v16H4z" /><path d="M4 9h16M4 14h16M9 4v16M15 4v16" /></svg>);
 
 /* Local copy of the app's modal shell — importing it from PayTrackApp would
@@ -40,6 +41,20 @@ function lastDueDate(ymd: string, months: number): string {
   return `${year}-${pad(month + 1)}-${pad(Math.min(d, lastDay))}`;
 }
 
+/** 1st, 2nd, 3rd, 4th … — "the 3th" was showing before this existed. */
+function ordinal(n: number): string {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+}
+
+/** 'YYYY-MM-DD' shifted by whole days, month and year rollover included. */
+function addDaysYmd(ymd: string, days: number): string {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 const fmtDay = (ymd: string): string =>
   new Date(`${ymd}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
@@ -62,9 +77,12 @@ export function RemindersPanel({ me, onToast }: { me: MeUser | null; onToast: (m
   const [payFor, setPayFor] = useState<Reminder | null>(null);
   const [deleteFor, setDeleteFor] = useState<Reminder | null>(null);
   const [showPaid, setShowPaid] = useState(false);
+  const [timingOpen, setTimingOpen] = useState(false);
 
   const q = useQuery({ queryKey: ["reminders"], queryFn: api.reminders, enabled: !!me, refetchInterval: 30000 });
   const all = useMemo(() => q.data?.reminders ?? [], [q.data]);
+  const defaults = q.data?.defaults ?? { sendHours: [11, 21], leadDays: 3 };
+  const my: MyTiming = q.data?.my ?? { group: defaults, followsGroup: true, mine: defaults };
   const refresh = () => qc.invalidateQueries({ queryKey: ["reminders"] });
 
   const mDelete = useMutation({
@@ -103,6 +121,9 @@ export function RemindersPanel({ me, onToast }: { me: MeUser | null; onToast: (m
             <div className="remmeta">
               Due {fmtDay(r.dueDate)} · <b style={{ color: lab.c }}>{lab.t}</b>
               {r.monthly && <span className="remtag">monthly</span>}
+              {r.customTiming && (
+                <span className="remtag alt" title={`${r.leadDays}d ahead · ${fmtHours(r.sendHours)}`}>own timing</span>
+              )}
             </div>
           )}
           {paidRow && r.paidNote && <div className="remnote">“{r.paidNote}”</div>}
@@ -136,16 +157,20 @@ export function RemindersPanel({ me, onToast }: { me: MeUser | null; onToast: (m
         <div>
           <h3>EMI reminders</h3>
           <p>
-            Everyone gets a reminder 3 days before the due date, then every day until someone marks it paid —
-            twice daily, 11am and 9pm.
+            You get reminded {my.mine.leadDays === 0 ? "on the due date" : `${my.mine.leadDays} day${my.mine.leadDays === 1 ? "" : "s"} ahead`},
+            at {fmtHours(my.mine.sendHours)}, then every day until someone marks it paid.
+            {my.followsGroup ? " That's the group setting." : " That's your own setting."}
           </p>
         </div>
-        {isManager && (
-          <div className="remtools">
-            <button className="btn btn-ghost sm" onClick={() => setImportOpen(true)}><IcSheet />Import sheet</button>
-            <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}><IcPlus />Add</button>
-          </div>
-        )}
+        <div className="remtools">
+          <button className="btn btn-ghost sm" onClick={() => setTimingOpen(true)}><IcClock />Timing</button>
+          {isManager && (
+            <>
+              <button className="btn btn-ghost sm" onClick={() => setImportOpen(true)}><IcSheet />Import sheet</button>
+              <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}><IcPlus />Add</button>
+            </>
+          )}
+        </div>
       </div>
 
       {nowDue.length > 0 && (
@@ -175,9 +200,19 @@ export function RemindersPanel({ me, onToast }: { me: MeUser | null; onToast: (m
         </>
       )}
 
-      {addOpen && <ReminderSheet onClose={() => setAddOpen(false)} onDone={(m) => { refresh(); setAddOpen(false); onToast(m); }} onError={(m) => onToast(m, true)} />}
-      {editFor && <ReminderSheet initial={editFor} onClose={() => setEditFor(null)} onDone={(m) => { refresh(); setEditFor(null); onToast(m); }} onError={(m) => onToast(m, true)} />}
+      {addOpen && <ReminderSheet defaults={defaults} onClose={() => setAddOpen(false)} onDone={(m) => { refresh(); setAddOpen(false); onToast(m); }} onError={(m) => onToast(m, true)} />}
+      {editFor && <ReminderSheet initial={editFor} defaults={defaults} onClose={() => setEditFor(null)} onDone={(m) => { refresh(); setEditFor(null); onToast(m); }} onError={(m) => onToast(m, true)} />}
       {payFor && <MarkPaidSheet reminder={payFor} me={me} onClose={() => setPayFor(null)} onDone={(m) => { refresh(); setPayFor(null); onToast(m); }} onError={(m) => onToast(m, true)} />}
+      {timingOpen && (
+        <TimingSheet
+          my={my}
+          isManager={isManager}
+          defaults={defaults}
+          onClose={() => setTimingOpen(false)}
+          onDone={(m) => { refresh(); setTimingOpen(false); onToast(m); }}
+          onError={(m) => onToast(m, true)}
+        />
+      )}
       {deleteFor && (
         <DeleteSeriesSheet
           reminder={deleteFor}
@@ -191,10 +226,171 @@ export function RemindersPanel({ me, onToast }: { me: MeUser | null; onToast: (m
   );
 }
 
+/* Hour picker — a row of 0-23 toggles. Clearer than a free-text field, and it
+   can't produce an invalid hour. */
+function HourPicker({ value, onChange }: { value: number[]; onChange: (h: number[]) => void }) {
+  const toggle = (h: number) =>
+    onChange(value.includes(h) ? value.filter((x) => x !== h).sort((a, b) => a - b) : [...value, h].sort((a, b) => a - b));
+  return (
+    <div className="hourgrid">
+      {Array.from({ length: 24 }, (_, h) => (
+        <button
+          key={h}
+          type="button"
+          className={`hourcell ${value.includes(h) ? "on" : ""}`}
+          onClick={() => toggle(h)}
+          aria-pressed={value.includes(h)}
+        >
+          {String(h).padStart(2, "0")}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function LeadDaysField({
+  value, onChange, dueDate,
+}: { value: string; onChange: (v: string) => void; dueDate?: string }) {
+  const n = Number(value);
+  const ok = Number.isInteger(n) && n >= 0 && n <= 60;
+
+  // Spelling it out against the date actually chosen beats an abstract example.
+  let hint: string;
+  if (!ok) hint = "Enter a number from 0 to 60.";
+  else if (n === 0) hint = "Only on the due date itself, then daily until paid.";
+  else if (dueDate && /^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+    hint = `Due ${fmtDay(dueDate)} → first reminder ${fmtDay(addDaysYmd(dueDate, -n))}, then daily until paid.`;
+  } else {
+    const due = 10;
+    hint = `Due on the ${ordinal(due)} → first reminder on the ${ordinal(due - n)}, then daily until paid.`;
+  }
+
+  return (
+    <div className="fld">
+      <label>Start reminding this many days ahead</label>
+      <div className="remmonths">
+        <input inputMode="numeric" value={value} onChange={(e) => onChange(e.target.value)} />
+        <span>days before it&apos;s due</span>
+      </div>
+      <div className="amtwords">{hint}</div>
+    </div>
+  );
+}
+
+/* ── timing: mine, and (for Jignesh) the group's ───────────────────── */
+function TimingSheet({
+  my, isManager, defaults, onClose, onDone, onError,
+}: {
+  my: MyTiming; isManager: boolean; defaults: ReminderDefaults;
+  onClose: () => void; onDone: (m: string) => void; onError: (m: string) => void;
+}) {
+  const [tab, setTab] = useState<"mine" | "group">("mine");
+
+  // ── my own ──
+  const [followGroup, setFollowGroup] = useState(my.followsGroup);
+  const [myHours, setMyHours] = useState<number[]>(my.mine.sendHours);
+  const [myLead, setMyLead] = useState(String(my.mine.leadDays));
+  const myLeadN = Number(myLead);
+  const mineOk = followGroup || (myHours.length > 0 && Number.isInteger(myLeadN) && myLeadN >= 0 && myLeadN <= 60);
+
+  const mSaveMine = useMutation({
+    mutationFn: () =>
+      api.myTimingSave(followGroup ? { sendHours: null, leadDays: null } : { sendHours: myHours, leadDays: myLeadN }),
+    onSuccess: () => onDone(followGroup ? "You now follow the group timing" : "Your timing saved"),
+    onError: (e: Error) => onError(e.message),
+  });
+
+  // ── the group's ──
+  const [gHours, setGHours] = useState<number[]>(defaults.sendHours);
+  const [gLead, setGLead] = useState(String(defaults.leadDays));
+  const gLeadN = Number(gLead);
+  const groupOk = gHours.length > 0 && Number.isInteger(gLeadN) && gLeadN >= 0 && gLeadN <= 60;
+
+  const mSaveGroup = useMutation({
+    mutationFn: () => api.reminderSettingsSave({ sendHours: gHours, leadDays: gLeadN }),
+    onSuccess: () => onDone("Group timing saved"),
+    onError: (e: Error) => onError(e.message),
+  });
+
+  const busy = mSaveMine.isPending || mSaveGroup.isPending;
+  const onMine = tab === "mine";
+
+  return (
+    <Sheet
+      title="Reminder timing"
+      onClose={onClose}
+      foot={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button
+            className="btn btn-primary"
+            style={{ flex: 1 }}
+            disabled={busy || (onMine ? !mineOk : !groupOk)}
+            onClick={() => (onMine ? mSaveMine.mutate() : mSaveGroup.mutate())}
+          >
+            {busy ? "Saving…" : onMine ? "Save my timing" : "Save group timing"}
+          </button>
+        </>
+      }
+    >
+      {isManager && (
+        <div className="timingtabs">
+          <button type="button" className={onMine ? "on" : ""} onClick={() => setTab("mine")}>Just me</button>
+          <button type="button" className={!onMine ? "on" : ""} onClick={() => setTab("group")}>Everyone</button>
+        </div>
+      )}
+
+      {onMine ? (
+        <>
+          <p>How far ahead <b>you</b> want to hear about an EMI. It changes nothing for anyone else.</p>
+          <div className="fld">
+            <label className="remcheck">
+              <input type="checkbox" checked={followGroup} onChange={(e) => setFollowGroup(e.target.checked)} />
+              <span>Use the group timing</span>
+            </label>
+            {followGroup ? (
+              <div className="amtwords">
+                {my.group.leadDays === 0 ? "On the due date" : `${my.group.leadDays} days ahead`}, at {fmtHours(my.group.sendHours)}.
+              </div>
+            ) : (
+              <div className="subfld">
+                <div className="fld">
+                  <label>Send at</label>
+                  <HourPicker value={myHours} onChange={setMyHours} />
+                  <div className="amtwords">{myHours.length ? fmtHours(myHours) : "Pick at least one time."}</div>
+                </div>
+                <LeadDaysField value={myLead} onChange={setMyLead} />
+              </div>
+            )}
+          </div>
+          <p>
+            If an EMI is set to need more notice than you asked for, you still get it earlier — nobody
+            hears about something later than the EMI demands.
+          </p>
+        </>
+      ) : (
+        <>
+          <p>The group setting. It applies to everyone who hasn&apos;t chosen their own.</p>
+          <div className="fld">
+            <label>Send at</label>
+            <HourPicker value={gHours} onChange={setGHours} />
+            <div className="amtwords">{gHours.length ? `${fmtHours(gHours)} — India time.` : "Pick at least one time."}</div>
+          </div>
+          <LeadDaysField value={gLead} onChange={setGLead} />
+          <p>Anyone who set their own timing keeps it. This never restarts reminders on anything already paid.</p>
+        </>
+      )}
+    </Sheet>
+  );
+}
+
 /* ── add / edit one reminder ───────────────────────────────────────── */
 function ReminderSheet({
-  initial, onClose, onDone, onError,
-}: { initial?: Reminder; onClose: () => void; onDone: (msg: string) => void; onError: (msg: string) => void }) {
+  initial, defaults, onClose, onDone, onError,
+}: {
+  initial?: Reminder; defaults: ReminderDefaults;
+  onClose: () => void; onDone: (msg: string) => void; onError: (msg: string) => void;
+}) {
   const [dueDate, setDueDate] = useState(initial?.dueDate ?? isoDay());
   const [description, setDescription] = useState(initial?.description ?? "");
   const [rupees, setRupees] = useState(initial ? String(Number(initial.amount) / 100) : "");
@@ -202,6 +398,10 @@ function ReminderSheet({
   // creation, because changing it later would mean rewriting the whole run.
   const [monthly, setMonthly] = useState(false);
   const [months, setMonths] = useState("12");
+  // Off = inherit the house default, which is what almost every EMI wants.
+  const [ownTiming, setOwnTiming] = useState(initial?.customTiming ?? false);
+  const [hours, setHours] = useState<number[]>(initial?.sendHours ?? defaults.sendHours);
+  const [lead, setLead] = useState(String(initial?.leadDays ?? defaults.leadDays));
 
   const amountPaise = (() => {
     const n = Number(rupees);
@@ -211,9 +411,14 @@ function ReminderSheet({
   const repeatMonths = monthly ? Number(months) : 1;
   const repeatOk = !monthly || (Number.isInteger(repeatMonths) && repeatMonths >= 1 && repeatMonths <= 120);
 
+  const leadN = Number(lead);
+  const timingOk = !ownTiming || (hours.length > 0 && Number.isInteger(leadN) && leadN >= 0 && leadN <= 60);
+  // null explicitly clears an override back to the default.
+  const timing = ownTiming ? { sendHours: hours, leadDays: leadN } : { sendHours: null, leadDays: null };
+
   const m = useMutation({
     mutationFn: () => {
-      const body = { description: description.trim(), amount: amountPaise, dueDate };
+      const body = { description: description.trim(), amount: amountPaise, dueDate, ...timing };
       return initial ? api.reminderUpdate(initial.id, body) : api.reminderCreate({ ...body, repeatMonths });
     },
     onSuccess: () =>
@@ -225,7 +430,7 @@ function ReminderSheet({
     onError: (e: Error) => onError(e.message),
   });
 
-  const ready = !!description.trim() && !!amountPaise && /^\d{4}-\d{2}-\d{2}$/.test(dueDate) && repeatOk;
+  const ready = !!description.trim() && !!amountPaise && /^\d{4}-\d{2}-\d{2}$/.test(dueDate) && repeatOk && timingOk;
 
   return (
     <Sheet
@@ -254,7 +459,7 @@ function ReminderSheet({
             <span>This repeats every month</span>
           </label>
           {monthly && (
-            <>
+            <div className="subfld">
               <div className="remmonths">
                 <span>for</span>
                 <input inputMode="numeric" value={months} onChange={(e) => setMonths(e.target.value)} />
@@ -263,13 +468,33 @@ function ReminderSheet({
               <div className="amtwords">
                 {repeatOk
                   ? `${repeatMonths} reminders · ${fmtDay(dueDate)} to ${fmtDay(lastDueDate(dueDate, repeatMonths))}`
-                  : "Enter 1 to 120 months."}
+                  : "Enter a number from 1 to 120."}
               </div>
-            </>
+            </div>
           )}
         </div>
       )}
-      <p>Reminders start 3 days before each due date and repeat every day until someone marks that month paid.</p>
+      <div className="fld">
+        <label className="remcheck">
+          <input type="checkbox" checked={ownTiming} onChange={(e) => setOwnTiming(e.target.checked)} />
+          <span>Give this one its own timing</span>
+        </label>
+        {!ownTiming ? (
+          <div className="amtwords">
+            Uses the house default — {defaults.leadDays === 0 ? "on the due date" : `${defaults.leadDays} days ahead`}, at {fmtHours(defaults.sendHours)}.
+          </div>
+        ) : (
+          <div className="subfld">
+            <div className="fld">
+              <label>Send at</label>
+              <HourPicker value={hours} onChange={setHours} />
+              <div className="amtwords">{hours.length ? fmtHours(hours) : "Pick at least one time."}</div>
+            </div>
+            <LeadDaysField value={lead} onChange={setLead} dueDate={dueDate} />
+          </div>
+        )}
+      </div>
+      <p>Reminders repeat every day past the due date until someone marks that month paid.</p>
     </Sheet>
   );
 }
@@ -405,6 +630,11 @@ function ImportSheet({
             Leave the 4th column empty for a one-off. Put <b>36</b> in it for a 36-month EMI, or a
             date like <b>06/08/2029</b> to repeat until then — one line becomes the whole schedule.
           </p>
+          <p>
+            Two more optional columns set timing per row: <b>5th</b> = days ahead to start
+            reminding, <b>6th</b> = send times as hours, e.g. <b>9,18</b>. Leave either blank and
+            that row follows the house default.
+          </p>
           <div className="fld">
             <label>Upload a CSV</label>
             <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" onChange={(e) => pickFile(e.target.files?.[0])} />
@@ -415,7 +645,7 @@ function ImportSheet({
               rows={7}
               value={csv}
               onChange={(e) => { setCsv(e.target.value); setPreview(null); }}
-              placeholder={"06/09/2026, Car loan EMI — HDFC, 45000, 36\n10/09/2026, Office rent, 120000"}
+              placeholder={"06/09/2026, Car loan EMI — HDFC, 45000, 36, 5, \"9,18\"\n10/09/2026, Office rent, 120000"}
             />
           </div>
         </>
@@ -437,6 +667,13 @@ function ImportSheet({
                   <span className="impdesc">
                     {r.description}
                     {r.repeatMonths > 1 && <span className="remtag">×{r.repeatMonths} months</span>}
+                    {(r.leadDays !== null || r.sendHours) && (
+                      <span className="remtag alt">
+                        {r.leadDays !== null ? `${r.leadDays}d ahead` : ""}
+                        {r.leadDays !== null && r.sendHours ? " · " : ""}
+                        {r.sendHours ? fmtHours(r.sendHours) : ""}
+                      </span>
+                    )}
                   </span>
                   <span className="impamt grotesk">{fmtPaise(r.amount)}</span>
                 </div>

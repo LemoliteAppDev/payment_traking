@@ -75,6 +75,9 @@ export interface Reminder {
   status: "PENDING" | "PAID";
   seriesId: string | null;
   monthly: boolean;
+  sendHours: number[];
+  leadDays: number;
+  customTiming: boolean;
   daysUntilDue: number;
   late: boolean;
   inWindow: boolean;
@@ -86,7 +89,16 @@ export interface Reminder {
   createdAt: string;
 }
 export interface UserLite2 { id: string; name: string }
-export interface ParsedReminderRow { line: number; dueDate: string; description: string; amount: string; repeatMonths: number }
+export interface ParsedReminderRow {
+  line: number; dueDate: string; description: string; amount: string;
+  repeatMonths: number; leadDays: number | null; sendHours: number[] | null;
+}
+export interface ReminderDefaults { sendHours: number[]; leadDays: number }
+export interface MyTiming {
+  group: ReminderDefaults;
+  followsGroup: boolean;
+  mine: ReminderDefaults;
+}
 export interface ReminderRowError { line: number; raw: string; message: string }
 export interface ReminderImportResult {
   parsed: number;
@@ -195,10 +207,26 @@ export const api = {
   privateMemberMove: (id: string, move: "up" | "down") =>
     req<{ ok: true }>(`/api/v1/private-members/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ move }) }),
   // EMI reminders (manager adds; manager/approver/payer see and mark paid)
-  reminders: () => req<{ reminders: Reminder[] }>("/api/v1/reminders"),
-  reminderCreate: (body: { description: string; amount: string; dueDate: string; repeatMonths?: number }) =>
+  reminders: () => req<{ reminders: Reminder[]; defaults: ReminderDefaults; my: MyTiming }>("/api/v1/reminders"),
+  myTiming: () => req<MyTiming>("/api/v1/reminders/settings/me"),
+  myTimingSave: (body: { sendHours: number[] | null; leadDays: number | null }) =>
+    req<MyTiming>("/api/v1/reminders/settings/me", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    }),
+  reminderSettings: () => req<{ defaults: ReminderDefaults }>("/api/v1/reminders/settings"),
+  reminderSettingsSave: (body: ReminderDefaults) =>
+    req<{ defaults: ReminderDefaults }>("/api/v1/reminders/settings", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    }),
+  reminderCreate: (body: {
+    description: string; amount: string; dueDate: string; repeatMonths?: number;
+    sendHours?: number[] | null; leadDays?: number | null;
+  }) =>
     req<{ reminder: Reminder }>("/api/v1/reminders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
-  reminderUpdate: (id: string, body: { description?: string; amount?: string; dueDate?: string }) =>
+  reminderUpdate: (id: string, body: {
+    description?: string; amount?: string; dueDate?: string;
+    sendHours?: number[] | null; leadDays?: number | null;
+  }) =>
     req<{ reminder: Reminder }>(`/api/v1/reminders/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
   reminderDelete: (id: string, scope: "one" | "series" = "one") =>
     req<{ ok: true; deleted: number }>(`/api/v1/reminders/${id}?scope=${scope}`, { method: "DELETE" }),
@@ -269,6 +297,13 @@ export const fmtStamp = (dateISO: string): string =>
     .toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })
     .replace(/\bam\b/i, "AM")
     .replace(/\bpm\b/i, "PM");
+
+/** [11,21] -> "11:00 and 21:00" — how the timing reads in the UI. */
+export function fmtHours(hours: number[]): string {
+  const parts = hours.map((h) => `${String(h).padStart(2, "0")}:00`);
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
 
 export const fmtShort = (dateISO: string): string =>
   new Date(dateISO).toLocaleDateString("en-IN", { day: "numeric", month: "short" });

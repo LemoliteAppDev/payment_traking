@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/session";
 import { createReminderSchema } from "@/lib/validation";
 import {
   listReminders, createReminder, requireReminderViewer, requireReminderManager, ymdToDate,
+  getReminderDefaults, getMyTiming,
 } from "@/lib/emi-reminders";
 
 // The three (manager / approver / payer) read the list. Nobody else — this is
@@ -10,7 +11,10 @@ import {
 export const GET = route(async () => {
   const user = await requireUser();
   requireReminderViewer(user);
-  return json({ reminders: await listReminders() });
+  const [reminders, defaults, my] = await Promise.all([
+    listReminders(), getReminderDefaults(), getMyTiming(user),
+  ]);
+  return json({ reminders, defaults, my });
 });
 
 // Manager only: add one reminder by hand.
@@ -24,6 +28,8 @@ export const POST = route(async (req: Request) => {
       amount: body.amount,
       dueDate: ymdToDate(body.dueDate),
       repeatMonths: body.repeatMonths,
+      sendHours: body.sendHours,
+      leadDays: body.leadDays,
     },
     user,
   );
