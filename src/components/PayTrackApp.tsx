@@ -8,6 +8,7 @@ import {
 import { signOutAction } from "@/app/actions";
 import { enablePush, isPushEnabled, pushSupported, pushBlocked } from "@/lib/push-client";
 import { notifyFx, primeAlertFx } from "@/lib/alert-fx";
+import { RemindersPanel } from "@/components/Reminders";
 
 /* ── tiny inline icons (match the prototype) ───────────────────────── */
 const IcSearch = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></svg>);
@@ -53,15 +54,20 @@ export function PayTrackApp() {
   const isApprover = me?.isApprover ?? false;
   const isManager = me?.isManager ?? false;
   const isAdmin = me?.isAdmin ?? false;
+  // EMI reminders: Jignesh (manager), Jagat (approver), Mahesh (payer).
+  const canSeeReminders = isManager || isApprover || isPayer;
 
   // When the acting user changes (e.g. after login), land everyone on the Waiting
   // tab, reset the selection, and drop any query cache from the previous user.
+  // Tapping an EMI reminder push opens /?tab=reminders — honour that instead.
   const lastUserId = useRef<string | null>(null);
   useEffect(() => {
     if (me && me.id !== lastUserId.current) {
       const switched = lastUserId.current !== null;
       lastUserId.current = me.id;
-      setFilter("requested");
+      const wanted = new URLSearchParams(window.location.search).get("tab");
+      const toReminders = !switched && wanted === "reminders" && (me.isManager || me.isApprover || me.isPayer);
+      setFilter(toReminders ? "reminders" : "requested");
       setSelected(null);
       if (switched) qc.invalidateQueries();
     }
@@ -76,6 +82,15 @@ export function PayTrackApp() {
     refetchOnWindowFocus: true,
   });
   const all = useMemo(() => listQ.data?.payments ?? [], [listQ.data]);
+
+  // Badge count for the Reminders tab: how many are inside their window.
+  const remindersQ = useQuery({
+    queryKey: ["reminders"],
+    queryFn: api.reminders,
+    enabled: !!me && canSeeReminders,
+    refetchInterval: 30000,
+  });
+  const remindersDue = (remindersQ.data?.reminders ?? []).filter((r) => r.status === "PENDING" && r.inWindow).length;
 
   const detailQ = useQuery({
     queryKey: ["payment", selected],
@@ -178,9 +193,12 @@ export function PayTrackApp() {
     mine: all.filter((p) => p.mine).length,
     requested: all.filter((p) => ["REQUESTED", "AWAITING_APPROVAL", "RETURNED", "OVERDUE"].includes(p.effective)).length,
     paid: all.filter((p) => p.effective === "PAID" || p.effective === "CONFIRMED").length,
-  }), [all]);
+    reminders: remindersDue,
+  }), [all, remindersDue]);
 
   const detail = detailQ.data?.payment ?? null;
+  // The Reminders tab takes over the whole pane (no payment detail beside it).
+  const showReminders = filter === "reminders" && canSeeReminders;
 
   // Sync the mobile stat-strip dots to scroll position.
   useEffect(() => {
@@ -210,21 +228,36 @@ export function PayTrackApp() {
             <div className="dots" id="stripDots"><i className="on" /><i /><i /><i /></div>
           </>}
 
-          <div className="body">
+          <div className={`body ${showReminders ? "remmode" : ""}`}>
             <div className="listcol">
-              <div className="search">
-                <IcSearch />
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search payee, purpose, amount…" />
-              </div>
-              <Filters filter={filter} counts={counts} onPick={setFilter} />
-              <div className="list">
-                {filtered.length === 0 ? (
-                  <div className="empty" style={{ height: "100%" }}><div><div className="big">✓</div><h3>Nothing here</h3><p>No payments in this filter.</p></div></div>
-                ) : filtered.map((p) => (
-                  <PaymentCard key={p.id} p={p} selected={selected === p.id} onClick={() => select(p.id)} />
-                ))}
-              </div>
-              <div className="mobbar"><button className="btn btn-primary" onClick={() => setNewOpen(true)}>＋ Add a payment</button></div>
+              {!showReminders && (
+                <div className="search">
+                  <IcSearch />
+                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search payee, purpose, amount…" />
+                </div>
+              )}
+              <Filters
+                filter={filter}
+                counts={counts}
+                showReminders={canSeeReminders}
+                // Drop the open payment when leaving for Reminders — on mobile the
+                // detail overlay would otherwise sit on top of the tab.
+                onPick={(f) => { setFilter(f); if (f === "reminders") setSelected(null); }}
+              />
+              {showReminders ? (
+                <RemindersPanel me={me} onToast={showToast} />
+              ) : (
+                <>
+                  <div className="list">
+                    {filtered.length === 0 ? (
+                      <div className="empty" style={{ height: "100%" }}><div><div className="big">✓</div><h3>Nothing here</h3><p>No payments in this filter.</p></div></div>
+                    ) : filtered.map((p) => (
+                      <PaymentCard key={p.id} p={p} selected={selected === p.id} onClick={() => select(p.id)} />
+                    ))}
+                  </div>
+                  <div className="mobbar"><button className="btn btn-primary" onClick={() => setNewOpen(true)}>＋ Add a payment</button></div>
+                </>
+              )}
             </div>
 
             <div className="detailcol">
@@ -661,8 +694,10 @@ function StatStrip({ all, isPayer, isApprover, isAdmin }: { all: Card[]; isPayer
 const fmtISODate = (iso: string) => iso.slice(0, 10);
 
 /* ── filters ───────────────────────────────────────────────────────── */
-function Filters({ filter, counts, onPick }: { filter: string; counts: Record<string, number>; onPick: (f: string) => void }) {
+function Filters({ filter, counts, onPick, showReminders }: { filter: string; counts: Record<string, number>; onPick: (f: string) => void; showReminders: boolean }) {
   const tabs: [string, string][] = [["requested", "Waiting"], ["paid", "Paid"], ["all", "All"], ["mine", "Mine"]];
+  // Reminders are Jignesh/Jagat/Mahesh only — the server enforces it too.
+  if (showReminders) tabs.push(["reminders", "Reminders"]);
   return (
     <div className="filters">
       {tabs.map(([k, l]) => (

@@ -341,6 +341,50 @@ a{color:inherit}
 .toast.err{background:var(--over)}
 .toast svg{width:16px;height:16px;color:#5FD39B;flex:none}
 
+
+/* ═══════════ EMI reminders tab ═══════════ */
+.rempanel{overflow-y:auto;flex:1;-webkit-overflow-scrolling:touch;padding:4px 15px 20px}
+.remhead{display:flex;gap:12px;align-items:flex-start;padding:6px 0 12px;border-bottom:1px solid var(--line-2)}
+.remhead h3{font-size:15.5px;font-weight:700}
+.remhead p{font-size:12px;color:var(--ink-3);line-height:1.5;margin-top:4px;max-width:46ch}
+.remtools{display:flex;gap:7px;flex:none}
+.remtools .btn svg{width:14px;height:14px}
+.remsum{margin:12px 0 4px;padding:10px 12px;border-radius:11px;background:var(--over-soft);color:var(--over);font-size:13px;font-weight:600}
+.remsec{font-size:11.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);margin:18px 0 8px}
+.remsec.toggle{display:flex;align-items:center;justify-content:space-between;width:100%;background:none;cursor:pointer;padding:8px 0}
+.remsec.toggle:hover{color:var(--ink-2)}
+.remsec .chev{transition:transform .2s ease;font-size:11px}
+.remsec .chev.open{transform:rotate(180deg)}
+.remrow{display:flex;gap:11px;align-items:flex-start;padding:12px;margin-bottom:8px;background:var(--surface);border:1px solid var(--line-2);border-radius:12px}
+.remrow.hot{border-color:#F3C6C6;background:var(--over-soft)}
+.remrow.done{opacity:.72}
+.remico{width:30px;height:30px;flex:none;border-radius:9px;display:grid;place-items:center;background:var(--surface-2);font-size:14px}
+.remrow.hot .remico{background:#fff}
+.remmid{flex:1;min-width:0}
+.remdesc{font-size:14px;font-weight:600;color:var(--ink);line-height:1.35;word-break:break-word}
+.remmeta{font-size:11.5px;color:var(--ink-3);margin-top:3px}
+.remnote{font-size:11.5px;color:var(--ink-2);margin-top:4px;font-style:italic}
+.remright{display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex:none}
+.remamt{font-size:15px;font-weight:700;color:var(--ink);white-space:nowrap}
+.rembtns{display:flex;gap:5px;align-items:center}
+.rembtn{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:12.5px;background:var(--surface-2);border:1px solid var(--line-2)}
+.rembtn:hover{background:var(--surface-3);border-color:var(--line)}
+.remempty{text-align:center;color:var(--ink-3);padding:44px 20px;font-size:13px}
+.remempty .big{font-size:34px;margin-bottom:10px}
+.remempty h4{color:var(--ink);font-size:15px;margin-bottom:5px}
+.remempty p{max-width:32ch;margin:0 auto;line-height:1.5}
+.rempaidhead{display:flex;gap:10px;align-items:center;padding:11px;border-radius:11px;background:var(--surface-2);border:1px solid var(--line-2)}
+.rempaidhead .av{width:34px;height:34px;flex:none;border-radius:10px;display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700}
+.impsum{font-size:13px;color:var(--ink-2);padding:10px 12px;border-radius:11px;background:var(--surface-2);border:1px solid var(--line-2)}
+.imptable{display:flex;flex-direction:column;gap:5px;max-height:34vh;overflow-y:auto}
+.imptable.dim{opacity:.6}
+.improw{display:flex;gap:9px;align-items:baseline;font-size:12.5px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--line-2);border-radius:9px}
+.improw .impdate{flex:none;color:var(--ink-3);font-size:11.5px;white-space:nowrap}
+.improw .impdesc{flex:1;min-width:0;color:var(--ink);word-break:break-word}
+.improw .impamt{flex:none;font-weight:700}
+.improw.err{background:var(--over-soft);border-color:#F3C6C6;color:var(--over)}
+.improw.err em{display:block;font-style:normal;color:var(--ink-3);font-size:11px;margin-top:3px;word-break:break-all}
+
 /* ═══════════ MOBILE (< 860px): single column, full-screen detail ═══════════ */
 @media (max-width:859px){
   .strip{display:flex;gap:10px;padding:12px 14px 0;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
@@ -364,6 +408,7 @@ a{color:inherit}
   .mfoot .btn{flex:1}
   .otpfab{bottom:calc(88px + env(safe-area-inset-bottom));right:16px}
   body.viewing .otpfab{display:none}
+  .body.remmode .detailcol{display:none}
 }
 
 /* ═══════════ DESKTOP / TABLET (≥ 860px): two-pane ═══════════ */
@@ -374,6 +419,8 @@ a{color:inherit}
   .body{display:grid;grid-template-columns:minmax(320px,360px) 1fr;gap:14px;padding:14px 20px 20px;overflow:hidden}
   .listcol{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
   .detailcol{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;display:flex}
+  .body.remmode{grid-template-columns:1fr}
+  .body.remmode .detailcol{display:none}
   .detailcol .detail{width:100%}
   .otpfab{bottom:150px;right:26px}
   .scrim{align-items:center;justify-content:center;padding:24px}

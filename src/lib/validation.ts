@@ -70,3 +70,26 @@ export const pushSubscribeSchema = z.object({
     auth: z.string().min(1).max(255),
   }),
 });
+
+// ── EMI reminders ────────────────────────────────────────────────────
+export const createReminderSchema = z.object({
+  description: z.string().trim().min(1, "description is required").max(500),
+  amount: paise,
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dueDate must be YYYY-MM-DD"),
+});
+
+export const updateReminderSchema = z.object({
+  description: z.string().trim().min(1).max(500).optional(),
+  amount: paise.optional(),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dueDate must be YYYY-MM-DD").optional(),
+});
+
+export const markReminderPaidSchema = z.object({
+  paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "paidOn must be YYYY-MM-DD").optional(),
+  note: z.string().trim().max(500).optional().default(""),
+});
+
+export const importRemindersSchema = z.object({
+  csv: z.string().min(1, "Paste or upload some rows first.").max(500_000),
+  dryRun: z.boolean().optional().default(false),
+});

@@ -37,6 +37,11 @@ enum PaymentSourceType {
   INDIVIDUAL
 }
 
+enum ReminderStatus {
+  PENDING
+  PAID
+}
+
 enum EventType {
   REQUEST
   APPROVE
@@ -74,6 +79,9 @@ model User {
   approved    Payment[]      @relation("approvedBy")
   events      PaymentEvent[]
   attachments Attachment[]
+
+  remindersAdded Reminder[] @relation("reminderCreatedBy")
+  remindersPaid  Reminder[] @relation("reminderPaidBy")
 
   accounts          Account[]
   sessions          Session[]
@@ -233,6 +241,35 @@ model OtpMessage {
   expiresAt DateTime
 
   @@index([paymentId])
+}
+
+// EMI / recurring-due reminders. Standalone from Payment: no approval, no
+// proof, no payer flow. Only the manager (Jignesh) adds/edits; the manager,
+// approver and payer all get the reminders and any of them can mark it paid.
+// Reminders fire on D-3, D-2, D-1, D and keep going daily past the due date
+// until somebody marks it paid. See lib/emi-reminders.ts.
+model Reminder {
+  id          String         @id @default(cuid())
+  description String         @db.Text // EMI description, e.g. "Car loan EMI — HDFC"
+  amount      BigInt // integer paise
+  dueDate     DateTime // date-granularity (UTC midnight of the due day)
+  status      ReminderStatus @default(PENDING)
+
+  paidOn   DateTime? // the day it was actually paid (marker picks it)
+  paidAt   DateTime? // when the mark was made
+  paidById String?
+  paidBy   User?     @relation("reminderPaidBy", fields: [paidById], references: [id])
+  paidNote String?   @db.Text
+
+  createdById String
+  createdBy   User   @relation("reminderCreatedBy", fields: [createdById], references: [id])
+
+  lastRemindedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, dueDate])
+  @@index([dueDate])
 }
 
 model IdempotencyKey {

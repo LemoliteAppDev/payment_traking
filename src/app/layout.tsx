@@ -17,8 +17,12 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // suppressHydrationWarning: browser extensions stamp attributes onto <html>
+  // before React hydrates (e.g. a markdown viewer's class="mdv-loaded"), which
+  // React reports as a mismatch. It covers this element's own attributes only —
+  // mismatches inside the app still surface normally.
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />

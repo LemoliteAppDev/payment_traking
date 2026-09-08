@@ -67,6 +67,34 @@ export interface Detail extends Omit<Card, "mine"> {
   events: EventLite[];
 }
 
+export interface Reminder {
+  id: string;
+  description: string;
+  amount: string; // paise
+  dueDate: string; // YYYY-MM-DD
+  status: "PENDING" | "PAID";
+  daysUntilDue: number;
+  late: boolean;
+  inWindow: boolean;
+  paidOn: string | null;
+  paidAt: string | null;
+  paidNote: string;
+  paidBy: UserLite2 | null;
+  createdBy: UserLite2 | null;
+  createdAt: string;
+}
+export interface UserLite2 { id: string; name: string }
+export interface ParsedReminderRow { line: number; dueDate: string; description: string; amount: string }
+export interface ReminderRowError { line: number; raw: string; message: string }
+export interface ReminderImportResult {
+  parsed: number;
+  imported: number;
+  duplicates: ParsedReminderRow[];
+  errors: ReminderRowError[];
+  rows: ParsedReminderRow[];
+  dryRun: boolean;
+}
+
 export interface NotificationItem {
   id: string;
   type: string;
@@ -164,6 +192,19 @@ export const api = {
     req<{ ok: true }>(`/api/v1/private-members/${id}`, { method: "DELETE" }),
   privateMemberMove: (id: string, move: "up" | "down") =>
     req<{ ok: true }>(`/api/v1/private-members/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ move }) }),
+  // EMI reminders (manager adds; manager/approver/payer see and mark paid)
+  reminders: () => req<{ reminders: Reminder[] }>("/api/v1/reminders"),
+  reminderCreate: (body: { description: string; amount: string; dueDate: string }) =>
+    req<{ reminder: Reminder }>("/api/v1/reminders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+  reminderUpdate: (id: string, body: { description?: string; amount?: string; dueDate?: string }) =>
+    req<{ reminder: Reminder }>(`/api/v1/reminders/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+  reminderDelete: (id: string) => req<{ ok: true }>(`/api/v1/reminders/${id}`, { method: "DELETE" }),
+  reminderMarkPaid: (id: string, body: { paidOn?: string; note?: string }) =>
+    req<{ reminder: Reminder }>(`/api/v1/reminders/${id}/paid`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+  reminderUnmarkPaid: (id: string) =>
+    req<{ reminder: Reminder }>(`/api/v1/reminders/${id}/paid`, { method: "DELETE" }),
+  reminderImport: (csv: string, dryRun: boolean) =>
+    req<ReminderImportResult>("/api/v1/reminders/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ csv, dryRun }) }),
   // standalone secure OTP channel (approver <-> payer)
   otpList: () => req<{ messages: OtpMsg[] }>(`/api/v1/otp`),
   otpSend: (message: string) =>
