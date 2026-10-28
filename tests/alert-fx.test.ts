@@ -53,6 +53,15 @@ describe("notification chime + buzz", () => {
     expect(started).toHaveLength(2);
   });
 
+  it("always fires when forced, so the test button never feels dead", async () => {
+    const { notifyFx } = await import("../src/lib/alert-fx");
+    notifyFx();
+    notifyFx(true); // the "test sound & vibration" tap, straight after an alert
+    expect(buzzes).toHaveLength(2);
+    expect(buzzes[1]).toEqual([180, 90, 180, 90, 260]); // a longer, deliberate buzz
+    expect(started).toHaveLength(4); // two chimes, two notes each
+  });
+
   it("is a no-op where vibration or audio is missing (iOS, old browsers)", async () => {
     vi.stubGlobal("navigator", {});
     vi.stubGlobal("window", { addEventListener: () => {} }); // no AudioContext

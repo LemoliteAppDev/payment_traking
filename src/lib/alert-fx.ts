@@ -73,11 +73,14 @@ export function buzz(pattern: number | number[] = [120, 60, 120]): void {
 /**
  * Fire both for a new notification. Debounced so the 10s poll and the service
  * worker's push message can't double-buzz for the same event.
+ *
+ * `force` skips the debounce — for the "test sound & vibration" button, where
+ * the whole point is that the tap always produces something.
  */
-export function notifyFx(): void {
+export function notifyFx(force = false): void {
   const now = Date.now();
-  if (now - lastFiredAt < 3000) return;
+  if (!force && now - lastFiredAt < 3000) return;
   lastFiredAt = now;
   playChime();
-  buzz();
+  buzz(force ? [180, 90, 180, 90, 260] : undefined);
 }

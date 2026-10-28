@@ -123,6 +123,38 @@ export interface NotificationsResponse {
   unread: number;
 }
 
+// ── Notification check (who's actually getting alerts) ───────────────
+export interface AlertDevice {
+  id: string;
+  device: string | null;
+  addedAt: string;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  failureCount: number;
+  healthy: boolean;
+}
+export type AlertState = "on" | "failing" | "off";
+export interface PersonAlerts {
+  id: string; name: string; role: Role;
+  isPayer: boolean; isApprover: boolean; isManager: boolean;
+  state: AlertState;
+  devices: AlertDevice[];
+  lastDeliveredAt: string | null;
+  alertsFor: string[];
+}
+export interface AlertsOverview {
+  configured: boolean;
+  people: PersonAlerts[];
+  on: number;
+  failing: number;
+  off: number;
+}
+export interface TestResult {
+  userId: string; name: string;
+  devices: number; delivered: number; failed: number; dropped: number;
+  miss?: "no-device" | "not-configured";
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const text = await res.text();
@@ -174,6 +206,12 @@ export const api = {
   remove: (id: string) => req<{ ok: true }>(`/api/v1/payments/${id}`, { method: "DELETE" }),
   notifications: () => req<NotificationsResponse>("/api/v1/notifications"),
   markNotificationsRead: () => req<{ ok: true }>("/api/v1/notifications/read", { method: "POST" }),
+  // notification check — is everyone actually getting alerts?
+  alertsOverview: () => req<AlertsOverview>("/api/v1/push/status"),
+  pushTest: (body: { scope: "me" | "user" | "all"; userId?: string }) =>
+    req<{ results: TestResult[] }>("/api/v1/push/test", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    }),
   // team management (manager only)
   teamList: () => req<{ users: TeamUser[] }>("/api/v1/users"),
   teamCreate: (body: { name: string; loginId: string; password: string; role: Role }) =>

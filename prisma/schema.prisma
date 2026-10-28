@@ -100,6 +100,14 @@ model PushSubscription {
   auth      String   @db.VarChar(255)
   createdAt DateTime @default(now())
 
+  // Delivery health, so "did everyone get it?" is answerable per device.
+  // A device that keeps failing is a silent subscription, not a happy one.
+  device        String?   @db.VarChar(120) // friendly label, e.g. "Android · Chrome"
+  lastSuccessAt DateTime?
+  lastFailureAt DateTime?
+  lastError     String?   @db.VarChar(180)
+  failureCount  Int       @default(0)
+
   @@index([userId])
 }
 

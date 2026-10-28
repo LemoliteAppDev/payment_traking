@@ -71,6 +71,11 @@ export const pushSubscribeSchema = z.object({
   }),
 });
 
+export const pushTestSchema = z.object({
+  scope: z.enum(["me", "user", "all"]).default("me"),
+  userId: z.string().min(1).optional(),
+});
+
 // ── EMI reminders ────────────────────────────────────────────────────
 export const createReminderSchema = z.object({
   description: z.string().trim().min(1, "description is required").max(500),

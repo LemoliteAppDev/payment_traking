@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, isoDay, timeAgo, listSortKey,
-  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem, type OtpMsg, type PayAccountLite, type PrivateMemberLite,
+  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem, type OtpMsg, type PayAccountLite, type PrivateMemberLite, type PersonAlerts, type TestResult,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
 import { enablePush, isPushEnabled, pushSupported, pushBlocked } from "@/lib/push-client";
@@ -452,6 +452,7 @@ function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, e
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [push, setPush] = useState<"loading" | "on" | "off" | "blocked" | "unsupported">("loading");
+  const [testing, setTesting] = useState(false);
 
   const notifQ = useQuery({ queryKey: ["notifications"], queryFn: api.notifications, refetchInterval: 10000 });
   const allItems = useMemo(() => notifQ.data?.items ?? [], [notifQ.data]);
@@ -537,6 +538,24 @@ function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, e
     else { setPush("off"); onToast("Couldn't turn on browser alerts — try Chrome.", true); }
   }
 
+  /* Prove the alert works on *this* device: chime and buzz right away, then
+     send a real push so the closed-app banner is checked too. */
+  async function testMine() {
+    setTesting(true);
+    notifyFx(true);
+    try {
+      const { results } = await api.pushTest({ scope: "me" });
+      const r = results[0];
+      if (!r || r.miss === "no-device") onToast("Chimed and buzzed. No device registered yet for closed-app alerts.", true);
+      else if (r.miss === "not-configured") onToast("Chimed and buzzed. Closed-app alerts aren't set up on the server.", true);
+      else if (r.delivered > 0) onToast(`Chimed and buzzed — test alert sent to ${r.delivered} device${r.delivered > 1 ? "s" : ""}.`);
+      else onToast("Chimed and buzzed, but the device push failed — turn alerts off and on again.", true);
+    } catch (e) {
+      onToast((e as Error).message, true);
+    }
+    setTesting(false);
+  }
+
   return (
     <div className="notifwrap">
       <button className="bell" onClick={toggle} title="Notifications" aria-label="Notifications" data-on={unread > 0 ? "1" : undefined}>
@@ -562,6 +581,9 @@ function NotificationBell({ onToast, onOpenPayment }: { onToast: (msg: string, e
             <button className="npush" onClick={enablePushNow}>🔔 Also alert me when the app is closed</button>
           )}
           {push === "blocked" && <div className="npush blocked">Browser alerts are blocked in your browser settings</div>}
+          <button className="npush ntest" onClick={testMine} disabled={testing}>
+            {testing ? "Testing…" : "🔊 Test sound & vibration"}
+          </button>
 
           <div className="nplist">
             {items.length === 0 ? (
@@ -1331,6 +1353,7 @@ function TeamSheet({ onClose, onToast, isManager, isAdmin }: { onClose: () => vo
   const [showNew, setShowNew] = useState(false);
   const [acctOpen, setAcctOpen] = useState(true);
   const [memberOpen, setMemberOpen] = useState(true);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [name, setName] = useState(""); const [loginId, setLoginId] = useState(""); const [pw, setPw] = useState(""); const [role, setRole] = useState<Role>("USER");
 
   const mCreate = useMutation({
@@ -1394,10 +1417,125 @@ function TeamSheet({ onClose, onToast, isManager, isAdmin }: { onClose: () => vo
                 <span className={`chev ${memberOpen ? "open" : ""}`}>▾</span>
               </button>
               {memberOpen && <MembersManager onToast={onToast} />}
+              <button type="button" className="sechead toggle" style={{ marginTop: 18 }} onClick={() => setNotifOpen((o) => !o)}>
+                <span>Notification check</span>
+                <span className={`chev ${notifOpen ? "open" : ""}`}>▾</span>
+              </button>
+              {notifOpen && <NotificationCheck onToast={onToast} />}
             </div>
           )}
         </>
       )}
     </Sheet>
+  );
+}
+
+
+/* ── notification check (admin) ────────────────────────────────────── */
+/* Two questions, side by side: is each person *routed* the alerts their role
+   implies, and are their devices still *accepting* a push? A phone that
+   quietly stopped receiving looks identical to a working one until you ask. */
+function roleLine(p: PersonAlerts): string {
+  const tags = [p.role === "ADMIN" ? "Admin" : "User"];
+  if (p.isPayer) tags.push("payer");
+  if (p.isApprover) tags.push("approver");
+  if (p.isManager) tags.push("manager");
+  return tags.join(" · ");
+}
+
+function deliveryLine(p: PersonAlerts): string {
+  if (p.state === "off") return "No device — won't get alerts when PayTrack is closed";
+  const n = p.devices.length;
+  const devices = `${n} device${n > 1 ? "s" : ""}`;
+  const last = p.lastDeliveredAt ? `last delivered ${timeAgo(p.lastDeliveredAt)}` : "nothing delivered yet";
+  return p.state === "failing" ? `${devices} · failing · ${last}` : `${devices} · ${last}`;
+}
+
+function resultLine(r: TestResult): string {
+  if (r.miss === "no-device") return `${r.name} — no device registered`;
+  if (r.miss === "not-configured") return `${r.name} — server has no push keys`;
+  if (r.delivered > 0) return `${r.name} — reached ${r.delivered} of ${r.devices}`;
+  return `${r.name} — failed on ${r.devices} device${r.devices > 1 ? "s" : ""}`;
+}
+
+function NotificationCheck({ onToast }: { onToast: (m: string, err?: boolean) => void }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["alerts"], queryFn: api.alertsOverview });
+  const [results, setResults] = useState<TestResult[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function send(scope: "all" | "user", userId?: string) {
+    setBusy(userId ?? "all");
+    setResults(null);
+    try {
+      const { results: r } = await api.pushTest({ scope, userId });
+      setResults(r);
+      const reached = r.filter((x) => x.delivered > 0).length;
+      onToast(reached === r.length ? `Test sent — all ${r.length} reached` : `Test sent — ${reached} of ${r.length} reached`, reached < r.length);
+      qc.invalidateQueries({ queryKey: ["alerts"] });
+    } catch (e) {
+      onToast((e as Error).message, true);
+    }
+    setBusy(null);
+  }
+
+  if (q.isLoading) return <div className="ncmeta" style={{ padding: "8px 2px" }}>Checking…</div>;
+  if (q.error) return <div className="ncwarn">Couldn&apos;t load the check: {(q.error as Error).message}</div>;
+  const d = q.data;
+  if (!d) return null;
+
+  return (
+    <div className="nccheck">
+      {!d.configured && (
+        <div className="ncwarn">
+          Closed-app alerts aren&apos;t set up on the server (no push keys), so nobody is receiving them yet.
+          In-app chime and vibration still work while PayTrack is open.
+        </div>
+      )}
+      <div className="ncsum">
+        <span><b>{d.on}</b> getting alerts</span>
+        {d.failing > 0 && <span className="bad"><b>{d.failing}</b> failing</span>}
+        {d.off > 0 && <span className="warn"><b>{d.off}</b> not set up</span>}
+      </div>
+      <button className="btn btn-primary" onClick={() => send("all")} disabled={!!busy}>
+        {busy === "all" ? "Sending…" : "🔔 Send a test to everyone"}
+      </button>
+
+      {results && (
+        <div className="ncres">
+          {results.map((r) => (
+            <div key={r.userId} className={r.delivered > 0 ? "ok" : "bad"}>
+              {r.delivered > 0 ? "✓" : "✕"} {resultLine(r)}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="nclist">
+        {d.people.map((p) => (
+          <div key={p.id} className="ncrow">
+            <span className={`ncdot ${p.state}`} title={p.state} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="ncname">{p.name} <span className="ncrole">{roleLine(p)}</span></div>
+              <div className="ncmeta">{deliveryLine(p)}</div>
+              {p.devices.length > 0 && (
+                <div className="ncdevs">
+                  {p.devices.map((dev) => (
+                    <span key={dev.id} className={dev.healthy ? "" : "bad"}>
+                      {dev.device ?? "Unknown device"}
+                      {dev.failureCount > 0 ? ` (${dev.failureCount} failed)` : ""}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="ncfor">Pinged for: {p.alertsFor.join(" · ")}</div>
+            </div>
+            <button className="tbtn" onClick={() => send("user", p.id)} disabled={!!busy} title={`Send ${p.name} a test`}>
+              {busy === p.id ? "…" : "🔔"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
