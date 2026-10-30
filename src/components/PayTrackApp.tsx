@@ -178,8 +178,10 @@ export function PayTrackApp() {
         if (filter === "requested") return isWaiting(p.effective);
         return true;
       })
-      // Today → by due date → waiting-for-approval → paid/done. In the Paid tab, last paid first.
+      // Waiting tab: newest-added first, no priority tiers. Paid tab: last paid first.
+      // Elsewhere: today → by due date → waiting-for-approval → paid/done.
       .sort((a, b) => {
+        if (filter === "requested") return +new Date(b.createdAt) - +new Date(a.createdAt);
         if (filter === "paid") return +new Date(b.paidAt ?? b.createdAt) - +new Date(a.paidAt ?? a.createdAt);
         const [ta, da] = listSortKey(a), [tb, db] = listSortKey(b);
         if (ta !== tb) return ta - tb;
