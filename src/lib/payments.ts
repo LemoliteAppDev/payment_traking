@@ -494,8 +494,10 @@ export async function listPayments(actor: SessionUser, filter: string, q: string
       }
       return true;
     })
-    // Today → by due date → awaiting approval → paid/done. Paid tab: last paid first.
+    // Waiting tab: newest-added first, no priority tiers. Paid tab: last paid first.
+    // Elsewhere: today → by due date → awaiting approval → paid/done.
     .sort((a, b) => {
+      if (filter === "requested") return b.createdAt.getTime() - a.createdAt.getTime();
       if (filter === "paid") return (b.paidAt?.getTime() ?? b.createdAt.getTime()) - (a.paidAt?.getTime() ?? a.createdAt.getTime());
       const [ta, da] = sortKeyOf(a), [tb, db] = sortKeyOf(b);
       if (ta !== tb) return ta - tb;
