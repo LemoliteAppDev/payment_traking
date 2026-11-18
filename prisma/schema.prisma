@@ -59,19 +59,19 @@ enum EventType {
 }
 
 model User {
-  id             String    @id @default(cuid())
-  name           String
-  email          String    @unique
-  role           Role
-  isPayer        Boolean   @default(false)
-  isApprover     Boolean   @default(false)
-  isManager      Boolean   @default(false)
-  active         Boolean   @default(true)
-  telegramChatId String?
-  passwordHash   String?
-  emailVerified  DateTime?
+  id                  String    @id @default(cuid())
+  name                String
+  email               String    @unique
+  role                Role
+  isPayer             Boolean   @default(false)
+  isApprover          Boolean   @default(false)
+  isManager           Boolean   @default(false)
+  active              Boolean   @default(true)
+  telegramChatId      String?
+  passwordHash        String?
+  emailVerified       DateTime?
   notificationsReadAt DateTime?
-  createdAt      DateTime  @default(now())
+  createdAt           DateTime  @default(now())
 
   requested   Payment[]      @relation("requestedBy")
   paid        Payment[]      @relation("paidBy")
@@ -80,8 +80,8 @@ model User {
   events      PaymentEvent[]
   attachments Attachment[]
 
-  remindersAdded Reminder[] @relation("reminderCreatedBy")
-  remindersPaid  Reminder[] @relation("reminderPaidBy")
+  remindersAdded        Reminder[]             @relation("reminderCreatedBy")
+  remindersPaid         Reminder[]             @relation("reminderPaidBy")
   reminderPreference    ReminderPreference?
   reminderNotifications ReminderNotification[]
 
@@ -89,6 +89,12 @@ model User {
   sessions          Session[]
   pushSubscriptions PushSubscription[]
   otpMessages       OtpMessage[]
+
+  chatDevices  ChatDevice[]
+  chatSent     ChatMessage[] @relation("chatSender")
+  chatThreadsA ChatThread[]  @relation("chatThreadA")
+  chatThreadsB ChatThread[]  @relation("chatThreadB")
+  chatReads    ChatRead[]
 }
 
 model PushSubscription {
@@ -148,24 +154,24 @@ model VerificationToken {
 }
 
 model Payment {
-  id            String    @id @default(cuid())
-  amount        BigInt // integer paise
-  payee         String
-  payFrom       String     // name of a PayAccount (the source to pay from)
-  payFromType   PaymentSourceType @default(ACCOUNT)
-  isPrivate     Boolean    @default(false) // private approver<->payer payment
-  purpose       String     @db.Text
-  upi           String?
-  status        Status    @default(REQUESTED)
-  dueDate       DateTime
-  scheduledFor  DateTime?
-  editedAt      DateTime?
-  approvedAt    DateTime?
-  paidAt        DateTime?
-  confirmedAt   DateTime?
+  id             String            @id @default(cuid())
+  amount         BigInt // integer paise
+  payee          String
+  payFrom        String // name of a PayAccount (the source to pay from)
+  payFromType    PaymentSourceType @default(ACCOUNT)
+  isPrivate      Boolean           @default(false) // private approver<->payer payment
+  purpose        String            @db.Text
+  upi            String?
+  status         Status            @default(REQUESTED)
+  dueDate        DateTime
+  scheduledFor   DateTime?
+  editedAt       DateTime?
+  approvedAt     DateTime?
+  paidAt         DateTime?
+  confirmedAt    DateTime?
   lastRemindedAt DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
   requestedById String
   requestedBy   User    @relation("requestedBy", fields: [requestedById], references: [id])
@@ -336,4 +342,121 @@ model IdempotencyKey {
   key       String   @id
   scope     String
   createdAt DateTime @default(now())
+}
+
+// ── End-to-end encrypted chat ────────────────────────────────────────
+// Person-to-person messages. The server stores ciphertext only: it has no
+// key material and cannot read a message, a file name or a voice note.
+//
+// How it works (see lib/e2ee.ts for the browser half):
+//   1. Every browser registers a ChatDevice — an ECDH P-256 public key. The
+//      private half is a non-extractable CryptoKey in IndexedDB and never
+//      leaves the device, so it never reaches this database.
+//   2. A message gets a fresh AES-256-GCM content key. Body, file bytes and
+//      file name are encrypted with it.
+//   3. The content key is wrapped once per recipient device (ChatEnvelope),
+//      using ephemeral-static ECDH + HKDF. Only that device can unwrap it.
+// What the server therefore still knows: who talks to whom, when, and the
+// coarse kind (text / image / file / audio). That metadata is what makes the
+// list view and push pings possible; content is out of reach.
+
+enum ChatKind {
+  TEXT
+  IMAGE
+  FILE
+  AUDIO
+}
+
+model ChatDevice {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label      String?  @db.VarChar(120) // "Android · Chrome", for the device list
+  publicKey  String   @db.Text // ECDH P-256 public key, JWK
+  active     Boolean  @default(true)
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  sent      ChatMessage[]  @relation("chatSenderDevice")
+  envelopes ChatEnvelope[]
+
+  @@index([userId])
+}
+
+// A 1:1 conversation. The pair is stored normalised (aId < bId) so two people
+// can only ever have one thread between them.
+model ChatThread {
+  id            String   @id @default(cuid())
+  aId           String
+  a             User     @relation("chatThreadA", fields: [aId], references: [id], onDelete: Cascade)
+  bId           String
+  b             User     @relation("chatThreadB", fields: [bId], references: [id], onDelete: Cascade)
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  messages ChatMessage[]
+  reads    ChatRead[]
+
+  @@unique([aId, bId])
+  @@index([lastMessageAt])
+}
+
+model ChatMessage {
+  id             String     @id @default(cuid())
+  threadId       String
+  thread         ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User       @relation("chatSender", fields: [senderId], references: [id], onDelete: Cascade)
+  senderDeviceId String
+  senderDevice   ChatDevice @relation("chatSenderDevice", fields: [senderDeviceId], references: [id], onDelete: Cascade)
+
+  kind ChatKind @default(TEXT)
+
+  // AES-256-GCM ciphertext of the typed message, base64. Empty for a bare
+  // attachment. The server holds no key for this.
+  body String @db.Text
+  iv   String @db.VarChar(64)
+
+  // Media: the bytes live on disk as ciphertext under storedName; the original
+  // file name and mime type are themselves encrypted into mediaMeta.
+  storedName String? @unique @db.VarChar(191)
+  mediaMeta  String? @db.Text
+  mediaIv    String? @db.VarChar(64)
+  mediaSize  Int? // size of the ciphertext on disk, for the quota display
+  durationMs Int? // voice-note length — needed to size the bubble before decrypting
+
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  envelopes ChatEnvelope[]
+
+  @@index([threadId, createdAt])
+}
+
+// The message's content key, wrapped for exactly one device. A device that
+// wasn't enrolled when the message was sent has no envelope, so the message
+// stays unreadable there — that is the cost of the server holding no keys.
+model ChatEnvelope {
+  id         String      @id @default(cuid())
+  messageId  String
+  message    ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  deviceId   String
+  device     ChatDevice  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  wrappedKey String      @db.Text // content key, AES-GCM-wrapped to this device
+  iv         String      @db.VarChar(64)
+  ephemeral  String      @db.Text // sender's ephemeral ECDH public key, JWK
+
+  @@unique([messageId, deviceId])
+  @@index([deviceId])
+}
+
+// How far each person has read in a thread — drives the unread badge.
+model ChatRead {
+  threadId String
+  thread   ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt   DateTime
+
+  @@id([threadId, userId])
 }

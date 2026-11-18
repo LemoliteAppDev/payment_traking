@@ -74,3 +74,24 @@ export async function deleteUpload(storedName: string): Promise<void> {
   if (!/^[A-Za-z0-9._-]+$/.test(storedName) || storedName.includes("..")) return;
   await unlink(path.join(uploadDir(), storedName)).catch(() => {});
 }
+
+/**
+ * Persist an already-encrypted chat blob. Unlike `saveUpload` there is no mime
+ * check to make: the bytes are AES-GCM ciphertext, the real type is sealed
+ * inside the message's metadata, and this process has no key to look. The
+ * stored name carries no extension for the same reason.
+ */
+export async function saveEncryptedBlob(file: File | Blob): Promise<{ storedName: string; size: number }> {
+  if (file.size > MAX_BYTES) {
+    throw new ApiError(413, "TOO_LARGE", `Attachment is larger than ${MAX_MB} MB.`);
+  }
+  const storedName = `${randomUUID()}.enc`;
+  const dir = uploadDir();
+  await mkdir(dir, { recursive: true });
+  const buffer = Buffer.from(await file.arrayBuffer());
+  if (buffer.byteLength > MAX_BYTES) {
+    throw new ApiError(413, "TOO_LARGE", `Attachment is larger than ${MAX_MB} MB.`);
+  }
+  await writeFile(path.join(dir, storedName), buffer);
+  return { storedName, size: buffer.byteLength };
+}
