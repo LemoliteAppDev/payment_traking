@@ -207,6 +207,8 @@ export function PayTrackApp() {
       })
       // Waiting: newest-added first, no priority tiers. Paid/Done: last paid
       // first. Everything else: today → by due date → awaiting → paid/done.
+      // (main's version of this sorted on `filter`, which the status dropdown
+      // replaced — same behaviour, now keyed on `status`.)
       .sort((a, b) => {
         if (status === "waiting") return +new Date(b.createdAt) - +new Date(a.createdAt);
         if (status === "paid" || status === "confirmed") {
