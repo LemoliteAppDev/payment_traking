@@ -2,13 +2,14 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  api, STATUS, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, isoDay, timeAgo, listSortKey,
-  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem, type OtpMsg, type PayAccountLite, type PrivateMemberLite, type PersonAlerts, type TestResult,
+  api, STATUS, STATUS_FILTERS, matchesStatus, PEOPLE, colorFor, initials, fmtPaise, wordsFromRupees, relDue, fmtShort, fmtStamp, fmtTime, dayLabel, isoDay, timeAgo, listSortKey,
+  type Card, type Detail, type Effective, type EventLite, type UserLite, type MeUser, type TeamUser, type Role, type NotificationItem, type OtpMsg, type PayAccountLite, type PrivateMemberLite, type PersonAlerts, type TestResult, type StatusFilter,
 } from "@/lib/client";
 import { signOutAction } from "@/app/actions";
 import { enablePush, isPushEnabled, pushSupported, pushBlocked } from "@/lib/push-client";
 import { notifyFx, primeAlertFx } from "@/lib/alert-fx";
 import { RemindersPanel } from "@/components/Reminders";
+import { ChatPanel, useChatDevice } from "@/components/Chat";
 
 /* ── tiny inline icons (match the prototype) ───────────────────────── */
 const IcSearch = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></svg>);
@@ -18,6 +19,13 @@ const IcInfo = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
 const IcCheck = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>);
 const IcClock = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 8v4l2.5 2.5" /></svg>);
 const IcUpload = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 16V4m0 0l-4 4m4-4l4 4" /><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>);
+const IcEdit = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z" /></svg>);
+const IcTrash = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /><path d="M10 11v5M14 11v5" /></svg>);
+const IcBell = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M13.7 21a2 2 0 01-3.4 0" /></svg>);
+const IcCalendar = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></svg>);
+const IcReturn = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14L4 9l5-5" /><path d="M4 9h11a5 5 0 010 10h-4" /></svg>);
+const IcMore = () => (<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg>);
+const IcResubmit = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V7m0 0l-5 5m5-5l5 5" /><path d="M5 4h14" /></svg>);
 
 const uuid = () => (globalThis.crypto?.randomUUID?.() ?? String(Math.random()).slice(2));
 
@@ -26,7 +34,11 @@ const ImageViewerCtx = createContext<(src: string, name: string) => void>(() => 
 
 export function PayTrackApp() {
   const qc = useQueryClient();
-  const [filter, setFilter] = useState("requested"); // default to the Waiting tab
+  // Three tabs now: All (payments), Chat, Reminders. Inside All, the old
+  // Waiting/Paid/Mine chips became one status dropdown.
+  const [tab, setTab] = useState<TabKey>("all");
+  const [status, setStatus] = useState<StatusFilter>("waiting");
+  const [chatThread, setChatThread] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; err?: boolean } | null>(null);
@@ -44,9 +56,10 @@ export function PayTrackApp() {
   // On narrow screens, selecting a payment shows the full-screen detail overlay
   // (CSS only reacts to `viewing` under the mobile breakpoint).
   useEffect(() => {
-    document.body.classList.toggle("viewing", !!selected);
+    const viewing = tab === "chat" ? !!chatThread : !!selected;
+    document.body.classList.toggle("viewing", viewing);
     return () => document.body.classList.remove("viewing");
-  }, [selected]);
+  }, [selected, tab, chatThread]);
 
   const meQ = useQuery({ queryKey: ["me"], queryFn: api.me });
   const me = meQ.data?.me ?? null;
@@ -66,9 +79,13 @@ export function PayTrackApp() {
       const switched = lastUserId.current !== null;
       lastUserId.current = me.id;
       const wanted = new URLSearchParams(window.location.search).get("tab");
-      const toReminders = !switched && wanted === "reminders" && (me.isManager || me.isApprover || me.isPayer);
-      setFilter(toReminders ? "reminders" : "requested");
+      const canRemind = me.isManager || me.isApprover || me.isPayer;
+      // Tapping a reminder or chat push lands on that tab.
+      const deep = !switched && (wanted === "reminders" ? (canRemind ? "reminders" : null) : wanted === "chat" ? "chat" : null);
+      setTab((deep as TabKey) ?? "all");
+      setStatus("waiting");
       setSelected(null);
+      setChatThread(null);
       if (switched) qc.invalidateQueries();
     }
   }, [me, qc]);
@@ -91,6 +108,21 @@ export function PayTrackApp() {
     refetchInterval: 30000,
   });
   const remindersDue = (remindersQ.data?.reminders ?? []).filter((r) => r.status === "PENDING" && r.inWindow).length;
+
+  // Enrol this browser's chat key as soon as the app loads — not when the Chat
+  // tab is first opened. A browser with no key on file can be written to but
+  // not read on, because there would be no envelope for it.
+  const { deviceId: chatDeviceId, error: chatDeviceError } = useChatDevice(me);
+
+  // Unread badge for the Chat tab. No deviceId: the count needs no envelopes,
+  // so the previews stay sealed for this call.
+  const chatUnreadQ = useQuery({
+    queryKey: ["chatUnread"],
+    queryFn: () => api.chatThreads(null),
+    enabled: !!me,
+    refetchInterval: 15000,
+  });
+  const chatUnread = chatUnreadQ.data?.unread ?? 0;
 
   const detailQ = useQuery({
     queryKey: ["payment", selected],
@@ -165,42 +197,47 @@ export function PayTrackApp() {
   // ── derived list ──
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const isWaiting = (e: Effective) => e === "REQUESTED" || e === "AWAITING_APPROVAL" || e === "RETURNED" || e === "OVERDUE";
     return all
       .filter((p) => {
         if (q) {
           const hay = `${p.payee} ${p.purpose} ${p.amount} ${p.requestedBy.name} ${p.payFrom}`.toLowerCase();
           if (!hay.includes(q)) return false;
         }
-        if (filter === "all") return true;
-        if (filter === "mine") return p.mine;
-        if (filter === "paid") return p.effective === "PAID" || p.effective === "CONFIRMED";
-        if (filter === "requested") return isWaiting(p.effective);
-        return true;
+        return matchesStatus(p, status);
       })
-      // Waiting tab: newest-added first, no priority tiers. Paid tab: last paid first.
-      // Elsewhere: today → by due date → waiting-for-approval → paid/done.
+      // Waiting: newest-added first, no priority tiers. Paid/Done: last paid
+      // first. Everything else: today → by due date → awaiting → paid/done.
       .sort((a, b) => {
-        if (filter === "requested") return +new Date(b.createdAt) - +new Date(a.createdAt);
-        if (filter === "paid") return +new Date(b.paidAt ?? b.createdAt) - +new Date(a.paidAt ?? a.createdAt);
+        if (status === "waiting") return +new Date(b.createdAt) - +new Date(a.createdAt);
+        if (status === "paid" || status === "confirmed") {
+          return +new Date(b.paidAt ?? b.createdAt) - +new Date(a.paidAt ?? a.createdAt);
+        }
         const [ta, da] = listSortKey(a), [tb, db] = listSortKey(b);
         if (ta !== tb) return ta - tb;
         if (ta === 1 && da !== db) return da - db;
         return +new Date(b.createdAt) - +new Date(a.createdAt);
       });
-  }, [all, filter, search]);
+  }, [all, status, search]);
 
-  const counts = useMemo(() => ({
-    all: all.length,
-    mine: all.filter((p) => p.mine).length,
-    requested: all.filter((p) => ["REQUESTED", "AWAITING_APPROVAL", "RETURNED", "OVERDUE"].includes(p.effective)).length,
-    paid: all.filter((p) => p.effective === "PAID" || p.effective === "CONFIRMED").length,
+  // How many payments sit behind each dropdown option, so the count is visible
+  // before you pick it.
+  const statusCounts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [key] of STATUS_FILTERS) out[key] = all.filter((p) => matchesStatus(p, key)).length;
+    return out;
+  }, [all]);
+
+  const tabCounts = useMemo(() => ({
+    all: all.filter((p) => matchesStatus(p, "waiting")).length,
+    chat: chatUnread,
     reminders: remindersDue,
-  }), [all, remindersDue]);
+  }), [all, chatUnread, remindersDue]);
 
   const detail = detailQ.data?.payment ?? null;
-  // The Reminders tab takes over the whole pane (no payment detail beside it).
-  const showReminders = filter === "reminders" && canSeeReminders;
+  // Reminders take over the whole pane. Chat keeps the two-pane shape, with
+  // the conversation where the payment detail normally sits.
+  const showReminders = tab === "reminders" && canSeeReminders;
+  const showChat = tab === "chat";
 
   // Sync the mobile stat-strip dots to scroll position.
   useEffect(() => {
@@ -230,34 +267,53 @@ export function PayTrackApp() {
             <div className="dots" id="stripDots"><i className="on" /><i /><i /><i /></div>
           </>}
 
-          <div className={`body ${showReminders ? "remmode" : ""}`}>
-            <div className="listcol">
-              {!showReminders && (
-                <div className="search">
-                  <IcSearch />
-                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search payee, purpose, amount…" />
-                </div>
-              )}
-              <Filters
-                filter={filter}
-                counts={counts}
-                showReminders={canSeeReminders}
-                // Drop the open payment when leaving for Reminders — on mobile the
-                // detail overlay would otherwise sit on top of the tab.
-                onPick={(f) => { setFilter(f); if (f === "reminders") setSelected(null); }}
+          <Tabs
+            tab={tab}
+            counts={tabCounts}
+            showReminders={canSeeReminders}
+            onPick={(t) => {
+              setTab(t);
+              // Leaving a tab drops whatever it had open, so the mobile overlay
+              // can't end up sitting on top of the wrong thing.
+              if (t !== "all") setSelected(null);
+              if (t !== "chat") setChatThread(null);
+            }}
+          />
+
+          <div className={`body ${showReminders ? "remmode" : ""} ${showChat ? "chatmode" : ""}`}>
+            {showChat ? (
+              <ChatPanel
+                me={me}
+                deviceId={chatDeviceId}
+                deviceError={chatDeviceError}
+                openThreadId={chatThread}
+                onOpenThread={setChatThread}
+                onToast={showToast}
               />
+            ) : (
+             <>
+              <div className="listcol">
+                {!showReminders && (
+                  <>
+                    <div className="search">
+                      <IcSearch />
+                      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search payee, purpose, amount…" />
+                    </div>
+                    <StatusSelect value={status} counts={statusCounts} onPick={setStatus} />
+                  </>
+                )}
               {showReminders ? (
                 <RemindersPanel me={me} onToast={showToast} />
               ) : (
                 <>
                   <div className="list">
                     {filtered.length === 0 ? (
-                      <div className="empty" style={{ height: "100%" }}><div><div className="big">✓</div><h3>Nothing here</h3><p>No payments in this filter.</p></div></div>
+                      <div className="empty" style={{ height: "100%" }}><div><div className="big">✓</div><h3>Nothing here</h3><p>No payments with this status.</p></div></div>
                     ) : filtered.map((p) => (
                       <PaymentCard key={p.id} p={p} selected={selected === p.id} onClick={() => select(p.id)} />
                     ))}
                   </div>
-                  <div className="mobbar"><button className="btn btn-primary" onClick={() => setNewOpen(true)}>＋ Add a payment</button></div>
+                  <div className="mobbar"><button className="btn btn-primary" onClick={() => setNewOpen(true)}><IcPlus />Add a payment</button></div>
                 </>
               )}
             </div>
@@ -282,6 +338,8 @@ export function PayTrackApp() {
                 />
               </div>
             </div>
+             </>
+            )}
           </div>
 
           {newOpen && <NewSheet onClose={() => setNewOpen(false)} onSubmit={(f) => mCreate.mutate(f)} busy={mCreate.isPending} onError={(m) => showToast(m, true)} canUseIndividuals={isApprover || isPayer} />}
@@ -718,25 +776,68 @@ function StatStrip({ all, isPayer, isApprover, isAdmin }: { all: Card[]; isPayer
 const fmtISODate = (iso: string) => iso.slice(0, 10);
 
 /* ── filters ───────────────────────────────────────────────────────── */
-function Filters({ filter, counts, onPick, showReminders }: { filter: string; counts: Record<string, number>; onPick: (f: string) => void; showReminders: boolean }) {
-  const tabs: [string, string][] = [["requested", "Waiting"], ["paid", "Paid"], ["all", "All"], ["mine", "Mine"]];
-  // Reminders are Jignesh/Jagat/Mahesh only — the server enforces it too.
-  if (showReminders) tabs.push(["reminders", "Reminders"]);
+/* ── the three tabs ────────────────────────────────────────────────── */
+export type TabKey = "all" | "chat" | "reminders";
+
+const TAB_LABELS: [TabKey, string][] = [["all", "All"], ["chat", "Chat"], ["reminders", "Reminders"]];
+
+function Tabs({ tab, counts, onPick, showReminders }: {
+  tab: TabKey; counts: Record<string, number>; onPick: (t: TabKey) => void; showReminders: boolean;
+}) {
+  // Reminders are the manager / approver / payer only — the server enforces
+  // that too; this just hides the tab.
+  const tabs = TAB_LABELS.filter(([k]) => k !== "reminders" || showReminders);
   return (
-    <div className="filters">
+    <div className="tabbar" role="tablist">
       {tabs.map(([k, l]) => (
-        <button key={k} className={`chip-f ${k === "mine" ? "mine" : ""} ${filter === k ? "on" : ""}`} onClick={() => onPick(k)}>
-          {l}<span className="n">{counts[k] ?? 0}</span>
+        <button key={k} role="tab" aria-selected={tab === k}
+          className={`tabbtn ${tab === k ? "on" : ""}`} onClick={() => onPick(k)}>
+          {l}
+          {counts[k] > 0 && <span className="tabn">{counts[k] > 99 ? "99+" : counts[k]}</span>}
         </button>
       ))}
     </div>
   );
 }
 
-/* ── list card ─────────────────────────────────────────────────────── */
+/* ── status dropdown (was the Waiting / Paid / All / Mine chips) ───── */
+function StatusSelect({ value, counts, onPick }: {
+  value: StatusFilter; counts: Record<string, number>; onPick: (f: StatusFilter) => void;
+}) {
+  return (
+    <div className="statuspick">
+      <select value={value} onChange={(e) => onPick(e.target.value as StatusFilter)} aria-label="Filter by status">
+        {STATUS_FILTERS.map(([k, l]) => (
+          <option key={k} value={k}>{l} ({counts[k] ?? 0})</option>
+        ))}
+      </select>
+      <span className="statuschev" aria-hidden>▾</span>
+    </div>
+  );
+}
+
+/* ── status pills ──────────────────────────────────────────────────── */
+// One line icon per status, drawn on the same 24-grid as the rest of the app
+// and inheriting the pill's colour. The design stays what the spec asks for —
+// icon + word + colour — the icon is just no longer an emoji, which rendered
+// differently on every device.
+const STATUS_ICON: Record<Effective, () => React.ReactElement> = {
+  // Needs approval — someone has to look at this person's request.
+  AWAITING_APPROVAL: () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 20v-1a4 4 0 00-4-4H6a4 4 0 00-4 4v1" /><circle cx="8" cy="7" r="3.5" /><path d="M16 11.5l2 2 4-4.5" /></svg>),
+  RETURNED: () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14L4 9l5-5" /><path d="M4 9h11a5 5 0 010 10h-4" /></svg>),
+  REQUESTED: () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2h12M6 22h12" /><path d="M8 2v4a4 4 0 004 4 4 4 0 004-4V2" /><path d="M8 22v-4a4 4 0 014-4 4 4 0 014 4v4" /></svg>),
+  SCHEDULED: () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></svg>),
+  PAID: () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>),
+  CONFIRMED: () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M8.5 12.5l2.5 2.5 4.5-5" /></svg>),
+  HOLD: () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9.6 9.2a2.5 2.5 0 014.9.6c0 1.7-2.5 2.1-2.5 3.7" /><path d="M12 17h.01" /></svg>),
+  CANCELLED: () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><path d="M15 9l-6 6M9 9l6 6" /></svg>),
+  OVERDUE: () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3.6L2.6 20h18.8L12 3.6z" /><path d="M12 10v4" /><path d="M12 17.2h.01" /></svg>),
+};
+
 function StatusPill({ eff }: { eff: Effective }) {
   const s = STATUS[eff];
-  return <span className={`pill ${s.cls}`}><span style={{ fontSize: 12, lineHeight: 1 }}>{s.ic}</span>{s.lab}</span>;
+  const Ic = STATUS_ICON[eff];
+  return <span className={`pill ${s.cls}`}><Ic />{s.lab}</span>;
 }
 function PaymentCard({ p, selected, onClick }: { p: Card; selected: boolean; onClick: () => void }) {
   const showDue = !(p.effective === "PAID" || p.effective === "CONFIRMED");
@@ -750,11 +851,21 @@ function PaymentCard({ p, selected, onClick }: { p: Card; selected: boolean; onC
         <div className="row2"><StatusPill eff={p.effective} />{p.payFromType === "INDIVIDUAL" && <span className="sourcetag">Individual</span>}{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}</div>
         <div className="meta">{p.purpose}</div>
         <div className="submeta">from <b>{p.payFrom}</b> · {p.mine ? "you asked" : "by " + p.requestedBy.name}</div>
-        <div className="cstamp">🕒 {fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${fmtStamp(p.editedAt)}` : ""}</div>
+        <div className="cstamp"><IcClock />{fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${fmtStamp(p.editedAt)}` : ""}</div>
         {needsMe && <div className="flagline">✓ Paid — tap to say you got it</div>}
       </div>
     </div>
   );
+}
+
+/** Who may edit or delete this payment. The server enforces this too. */
+function detailPerms(p: Detail, me: MeUser | null) {
+  const mine = me?.id === p.requestedBy.id;
+  return {
+    mine,
+    canEdit: mine && p.status !== "PAID" && p.status !== "CONFIRMED" && p.status !== "CANCELLED",
+    canDelete: (mine || !!me?.isAdmin) && p.status !== "PAID" && p.status !== "CONFIRMED",
+  };
 }
 
 /* ── detail ────────────────────────────────────────────────────────── */
@@ -766,6 +877,25 @@ interface DetailActions {
 }
 function PaymentDetail(props: { detail: Detail | null; me: MeUser | null; loading: boolean; onBack: () => void } & DetailActions) {
   const { detail: p, me } = props;
+  const thread = useRef<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Open on the newest message, the way a chat does — the latest status and
+  // the buttons that act on it are what you came for, not the first line.
+  // Declared above the early return so the hook order never changes.
+  const id = p?.id;
+  const count = p?.events.length ?? 0;
+  useEffect(() => {
+    const el = thread.current;
+    if (!el) return;
+    const toBottom = () => { el.scrollTop = el.scrollHeight; };
+    toBottom();
+    // A proof image arrives after the markup and makes the thread taller, so
+    // one scroll on mount lands short. `load` doesn't bubble — hence capture.
+    el.addEventListener("load", toBottom, true);
+    return () => el.removeEventListener("load", toBottom, true);
+  }, [id, count]);
+
   if (!p) {
     return (
       <div className="empty">
@@ -788,23 +918,79 @@ function PaymentDetail(props: { detail: Detail | null; me: MeUser | null; loadin
         <div className="av" style={{ background: colorFor(p.requestedBy.name) }}>{initials(p.payee)}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2>{p.payee}</h2>
-          <div className="sub">{p.purpose} · {mine ? "you asked" : "asked by " + p.requestedBy.name}</div>
+          <div className="sub">{mine ? "You asked for this" : "Asked by " + p.requestedBy.name}</div>
           <div style={{ marginTop: 7, display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
             <StatusPill eff={eff} />{p.payFromType === "INDIVIDUAL" && <span className="sourcetag">Individual</span>}{showDue && <span className="due" style={{ color: due.c }}>{due.t}</span>}
           </div>
-          <div className="tstamp">🕒 Raised {fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${fmtStamp(p.editedAt)}` : ""}</div>
+          <div className="tstamp"><IcClock />Raised {fmtStamp(p.createdAt)}{p.editedAt ? ` · edited ${fmtStamp(p.editedAt)}` : ""}</div>
         </div>
-        <div className="amt grotesk">{fmtPaise(p.amount)}<small>from {p.payFrom}</small></div>
+        <div className="dright">
+          <button className="dmore" onClick={() => setMenuOpen(true)} aria-label="Details and actions" title="Details and actions"><IcMore /></button>
+          <div className="amt grotesk">{fmtPaise(p.amount)}<small>from {p.payFrom}</small></div>
+        </div>
       </div>
-      <div className="frow">
-        <div className="cell"><div className="k">{p.payFromType === "INDIVIDUAL" ? "Individual" : "Pay from"}</div><div className="v">{p.payFrom}</div></div>
-        <div className="cell"><div className="k">Pay to</div><div className="v">{p.upi || p.payee}</div></div>
-        <div className="cell"><div className="k">Amount</div><div className="v">{fmtPaise(p.amount)}</div></div>
+      {p.upi && (
+        <div className="frow">
+          <div className="cell"><div className="k">Pay to</div><div className="v">{p.upi}</div></div>
+        </div>
+      )}
+      <div className="thread" ref={thread}>
+        {p.events.map((e, i) => {
+          const prev = p.events[i - 1];
+          const showDay = !prev || dayLabel(new Date(prev.createdAt)) !== dayLabel(new Date(e.createdAt));
+          return (
+            <div key={e.id}>
+              {showDay && <div className="convday"><span>{dayLabel(new Date(e.createdAt))}</span></div>}
+              <ThreadMsg ev={e} me={me} />
+            </div>
+          );
+        })}
       </div>
-      <div className="thread">{p.events.map((e) => <ThreadMsg key={e.id} ev={e} />)}</div>
       <ChatBox key={p.id} paymentId={p.id} />
       <Actions p={p} me={me} act={props} />
+      {menuOpen && <PaymentMenu p={p} me={me} act={props} onClose={() => setMenuOpen(false)} />}
     </>
+  );
+}
+
+function DRow({ k, v }: { k: string; v: React.ReactNode }) {
+  return <div className="drow"><span className="k">{k}</span><span className="v">{v}</span></div>;
+}
+
+/* The ⋯ menu. Holds the full details and the Edit / Delete actions, so neither
+   the header nor the action bar has to carry them. */
+function PaymentMenu({ p, me, act, onClose }: { p: Detail; me: MeUser | null; act: DetailActions; onClose: () => void }) {
+  const { mine, canEdit, canDelete } = detailPerms(p, me);
+  // "6d overdue" on a payment that is already paid is just wrong — once it is
+  // settled the due date is history, so only the date is shown. The list and
+  // the header drop the countdown the same way.
+  const settled = p.status === "PAID" || p.status === "CONFIRMED" || p.status === "CANCELLED";
+  const due = relDue(p.dueDate);
+  return (
+    <Sheet
+      title="Payment details"
+      onClose={onClose}
+      foot={<>
+        {canEdit && <button className="btn btn-ghost" onClick={() => { onClose(); act.onEdit(p); }}><IcEdit />Edit</button>}
+        {canDelete && <button className="btn btn-ghost del" onClick={() => { onClose(); act.onDelete(p.id); }}><IcTrash />Delete</button>}
+        <button className="btn btn-primary" onClick={onClose}>Done</button>
+      </>}
+    >
+      <div className="dlist">
+        <DRow k="Status" v={<StatusPill eff={p.effective} />} />
+        <DRow k="Amount" v={fmtPaise(p.amount)} />
+        <DRow k={p.payFromType === "INDIVIDUAL" ? "Individual" : "Pay from"} v={p.payFrom} />
+        <DRow k="Pay to" v={p.upi || p.payee} />
+        <DRow k="Purpose" v={p.purpose || "—"} />
+        <DRow k="Due" v={settled ? fmtShort(p.dueDate) : <>{fmtShort(p.dueDate)} <span style={{ color: due.c }}>· {due.t}</span></>} />
+        {p.scheduledFor && <DRow k="Planned for" v={fmtShort(p.scheduledFor)} />}
+        <DRow k="Raised by" v={mine ? "You" : p.requestedBy.name} />
+        <DRow k="Raised" v={fmtStamp(p.createdAt)} />
+        {p.editedAt && <DRow k="Edited" v={fmtStamp(p.editedAt)} />}
+        {p.paidAt && <DRow k="Paid" v={`${fmtStamp(p.paidAt)}${p.paidBy ? ` · ${p.paidBy.name}` : ""}`} />}
+        {p.confirmedAt && <DRow k="Confirmed" v={`${fmtStamp(p.confirmedAt)}${p.confirmedBy ? ` · ${p.confirmedBy.name}` : ""}`} />}
+      </div>
+    </Sheet>
   );
 }
 
@@ -822,16 +1008,16 @@ function ChatBox({ paymentId }: { paymentId: string }) {
   });
   const send = () => { const t = text.trim(); if (t && !m.isPending) m.mutate(t); };
   return (
-    <div className="chatbox">
+    <div className="composer">
       <input
-        className="chatin"
-        placeholder="Write a message…"
+        className="compin"
+        placeholder="Message"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); send(); } }}
       />
-      <button className="chatsend" onClick={send} disabled={!text.trim() || m.isPending} aria-label="Send message">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
+      <button className="compsend" onClick={send} disabled={!text.trim() || m.isPending} aria-label="Send message">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
       </button>
     </div>
   );
@@ -903,20 +1089,36 @@ function OtpFab() {
 }
 
 const SYS_TYPES = new Set(["SCHEDULE", "CONFIRM", "HOLD", "CANCEL", "NUDGE", "REMINDER", "APPROVE", "RETURN", "RESUBMIT"]);
-function ThreadMsg({ ev }: { ev: EventLite }) {
+function ThreadMsg({ ev, me }: { ev: EventLite; me: MeUser | null }) {
+  const who = ev.actor?.name ?? "System";
+  // Status changes read as the centred grey notices WhatsApp uses for
+  // "Messages are encrypted" — they are events, not something anyone said.
   if (SYS_TYPES.has(ev.type) && !ev.attachment) {
     const ic = ev.type === "CONFIRM" ? <IcCheck /> : <IcClock />;
-    return <div className="tmsg sys"><span className="sysline">{ic}{ev.message}</span></div>;
+    // A returned or cancelled payment carries the reason the person typed,
+    // stored in their own words with no name attached. Unlabelled it reads as
+    // the app talking, so say who it was.
+    const named = !ev.actor || ev.message.includes(who);
+    return (
+      <div className="msg sys">
+        <span className="sysline">
+          {ic}
+          {named ? ev.message : <span><b>{who}</b>: {ev.message}</span>}
+        </span>
+      </div>
+    );
   }
-  const who = ev.actor?.name ?? "System";
+  const mine = !!me && !!ev.actor && ev.actor.id === me.id;
   return (
-    <div className="tmsg">
-      <div className="tav" style={{ background: colorFor(who) }}>{initials(who)}</div>
-      <div className="bubble">
-        <div className="who" style={{ color: PEOPLE[who] ?? "#333" }}>{who}</div>
-        <div className="txt">{ev.message}</div>
+    <div className={`msg ${mine ? "mine" : ""}`}>
+      {/* Like a WhatsApp group: the other people get an avatar and a coloured
+          name, your own messages need neither. */}
+      {!mine && <div className="msgav" style={{ background: colorFor(who) }}>{initials(who)}</div>}
+      <div className="msgb">
+        {!mine && <div className="msgwho" style={{ color: PEOPLE[who] ?? "var(--ink-2)" }}>{who}</div>}
         {ev.attachment && <AttachmentView a={ev.attachment} />}
-        <div className="time">{new Date(ev.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
+        {ev.message && <div className="msgtxt">{ev.message}</div>}
+        <div className="msgtime">{fmtTime(ev.createdAt)}</div>
       </div>
     </div>
   );
@@ -926,7 +1128,7 @@ function AttachmentView({ a }: { a: { id: string; kind: string; originalName: st
   const openImage = useContext(ImageViewerCtx);
   if (a.mimeType.startsWith("image/")) {
     return (
-      <button type="button" className="proofimg" onClick={() => openImage(href, a.originalName)} title={a.originalName}>
+      <button type="button" className="msgimg" onClick={() => openImage(href, a.originalName)} title={a.originalName}>
         { /* eslint-disable-next-line @next/next/no-img-element */ }
         <img src={href} alt={a.originalName} loading="lazy" />
       </button>
@@ -934,12 +1136,13 @@ function AttachmentView({ a }: { a: { id: string; kind: string; originalName: st
   }
   const label = a.mimeType === "application/pdf" ? "PDF" : "FILE";
   return (
-    <div className="att">
-      <a className="file" href={href} target="_blank" rel="noreferrer">
-        <div className="ic" style={{ background: a.mimeType === "application/pdf" ? "#DE3C3C" : "#5A6B7B" }}>{label}</div>
-        <div style={{ minWidth: 0 }}><div className="fn">{a.originalName}</div><div className="fs">{a.kind === "PROOF" ? "proof" : "instruction"}</div></div>
-      </a>
-    </div>
+    <a className="msgfile" href={href} target="_blank" rel="noreferrer">
+      <div className="msgfileic" style={{ color: a.mimeType === "application/pdf" ? "var(--over)" : "var(--ink-2)" }}>{label}</div>
+      <div className="msgfilemid">
+        <div className="msgfilename">{a.originalName}</div>
+        <div className="msgfilesize">{a.kind === "PROOF" ? "Proof of payment" : "Instruction"}</div>
+      </div>
+    </a>
   );
 }
 
@@ -948,64 +1151,58 @@ function Actions({ p, me, act }: { p: Detail; me: MeUser | null; act: DetailActi
   const isPayer = !!me?.isPayer;
   const isApprover = !!me?.isApprover;
   const mine = me?.id === p.requestedBy.id;
-  const disabled = (label: string) => <button className="btn btn-ghost" disabled style={{ opacity: .55 }}>{label}</button>;
   let hint = ""; let btns: React.ReactNode = null;
 
   if (p.status === "AWAITING_APPROVAL") {
     if (isApprover) {
       hint = "Review this request — approve it, or send it back for changes.";
       btns = (<>
-        <button className="btn btn-ghost" onClick={() => act.onReject(p.id)}>↩️ Return</button>
-        <button className="btn btn-primary" onClick={() => act.onApprove(p.id)}>✓ Approve</button>
+        <button className="btn btn-ghost" onClick={() => act.onReject(p.id)}><IcReturn />Return</button>
+        <button className="btn btn-primary" onClick={() => act.onApprove(p.id)}><IcCheck />Approve</button>
       </>);
     } else if (mine) {
       hint = "Waiting for Jagat to approve. You can still edit it.";
-    } else { hint = "Waiting for Jagat to approve."; btns = disabled("Awaiting approval"); }
+    } else { hint = "Waiting for Jagat to approve."; }
   } else if (p.status === "RETURNED") {
     if (mine) {
       hint = "Jagat returned this for changes. Edit it, then resubmit.";
-      btns = <button className="btn btn-primary" onClick={() => act.onResubmit(p.id)}>↥ Resubmit</button>;
-    } else { hint = `Returned to ${p.requestedBy.name} for changes.`; btns = disabled("Returned"); }
+      btns = <button className="btn btn-primary" onClick={() => act.onResubmit(p.id)}><IcResubmit />Resubmit</button>;
+    } else { hint = `Returned to ${p.requestedBy.name} for changes.`; }
   } else if (isPayer) {
     if (eff === "REQUESTED" || (eff === "OVERDUE" && p.status === "REQUESTED")) {
       hint = "Pick a day to pay, or pay it now.";
       btns = (<>
-        <button className="btn btn-sched" onClick={() => act.onSchedule(p.id)}>📅 Pick a day</button>
-        <button className="btn btn-paid" onClick={() => act.onPay(p.id)}>✓ I paid this</button>
+        <button className="btn btn-sched" onClick={() => act.onSchedule(p.id)}><IcCalendar />Pick a day</button>
+        <button className="btn btn-paid" onClick={() => act.onPay(p.id)}><IcCheck />I paid this</button>
       </>);
     } else if (eff === "SCHEDULED" || (eff === "OVERDUE" && p.status === "SCHEDULED")) {
       hint = p.scheduledFor ? `Planned for ${fmtShort(p.scheduledFor)}.` : "A day is planned.";
-      btns = <button className="btn btn-paid" onClick={() => act.onPay(p.id)}>✓ I paid this</button>;
+      btns = <button className="btn btn-paid" onClick={() => act.onPay(p.id)}><IcCheck />I paid this</button>;
     } else if (eff === "HOLD") {
-      hint = "Waiting on missing details before you can pay."; btns = <button className="btn btn-paid" onClick={() => act.onPay(p.id)}>✓ I paid this</button>;
+      hint = "Waiting on missing details before you can pay."; btns = <button className="btn btn-paid" onClick={() => act.onPay(p.id)}><IcCheck />I paid this</button>;
     } else if (eff === "PAID") {
-      hint = `Paid. Now ${p.requestedBy.name} needs to say they got it.`; btns = disabled(`Waiting for ${p.requestedBy.name}`);
-    } else if (eff === "CONFIRMED") { hint = "All finished — paid and confirmed."; btns = disabled("✅ Finished"); }
-    else if (eff === "CANCELLED") { hint = "This payment was cancelled."; btns = disabled("Cancelled"); }
+      hint = `Paid. Now ${p.requestedBy.name} needs to say they got it.`;
+    } else if (eff === "CONFIRMED") { hint = "All finished — paid and confirmed."; }
+    else if (eff === "CANCELLED") { hint = "This payment was cancelled."; }
   } else {
     // requester / other admin view
     if (eff === "PAID" && mine) {
       hint = "Paid, with the proof attached. Look, then say you got it.";
-      btns = <button className="btn btn-conf" onClick={() => act.onConfirm(p.id)}>✓ Yes, I got it</button>;
-    } else if (eff === "CONFIRMED") { hint = mine ? "You said you got it. All finished." : "Finished."; btns = disabled("✅ Finished"); }
-    else if (eff === "CANCELLED") { hint = "This payment was cancelled."; btns = disabled("Cancelled"); }
-    else if (eff === "PAID") { hint = `Paid — waiting for ${p.requestedBy.name} to confirm.`; btns = disabled(`Waiting for ${p.requestedBy.name}`); }
+      btns = <button className="btn btn-conf" onClick={() => act.onConfirm(p.id)}><IcCheck />Yes, I got it</button>;
+    } else if (eff === "CONFIRMED") { hint = mine ? "You said you got it. All finished." : "Paid and confirmed — all finished."; }
+    else if (eff === "CANCELLED") { hint = "This payment was cancelled."; }
+    else if (eff === "PAID") { hint = `Paid — waiting for ${p.requestedBy.name} to confirm.`; }
     else {
       hint = mine ? "Approved — with the payer now. You'll be told as it changes." : `Raised by ${p.requestedBy.name}. With the payer now.`;
-      btns = <button className="btn btn-sched" onClick={() => act.onNudge(p.id)}>🔔 Send a reminder</button>;
+      btns = <button className="btn btn-sched" onClick={() => act.onNudge(p.id)}><IcBell />Send a reminder</button>;
     }
   }
-  // Edit (raiser) and Delete (raiser or admin) are available until it's paid.
-  const notFinal = p.status !== "PAID" && p.status !== "CONFIRMED" && p.status !== "CANCELLED";
-  const canEdit = mine && notFinal;
-  // Delete stays available until it's done — for the raiser or any admin.
-  const canDelete = (mine || !!me?.isAdmin) && p.status !== "PAID" && p.status !== "CONFIRMED";
+  // Edit and Delete moved into the ⋯ menu, so this bar carries only the
+  // decision the screen is asking for — on a phone that is one row, not three.
   return (
     <div className="actions">
       <span className="hint"><IcInfo />{hint}</span>
-      {canEdit && <button className="btn btn-ghost" onClick={() => act.onEdit(p)}>✏️ Edit</button>}
-      {canDelete && <button className="btn btn-ghost del" onClick={() => act.onDelete(p.id)}>🗑 Delete</button>}
-      {btns}
+      {btns && <div className="actmain">{btns}</div>}
     </div>
   );
 }

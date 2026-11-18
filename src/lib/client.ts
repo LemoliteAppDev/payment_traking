@@ -155,6 +155,45 @@ export interface TestResult {
   miss?: "no-device" | "not-configured";
 }
 
+// ── End-to-end encrypted chat ────────────────────────────────────────
+// Every `body`, `mediaMeta` and `wrappedKey` below is base64 ciphertext. The
+// plaintext only ever exists in this browser, after lib/e2ee.ts opens it.
+export type ChatKind = "TEXT" | "IMAGE" | "FILE" | "AUDIO";
+
+export interface ChatPerson {
+  id: string; name: string; email: string; role: Role;
+  isPayer: boolean; isApprover: boolean; isManager: boolean;
+}
+export interface ChatEnvelopeLite {
+  deviceId: string; wrappedKey: string; iv: string; ephemeral: string;
+}
+export interface ChatMessageLite {
+  id: string;
+  threadId: string;
+  kind: ChatKind;
+  mine: boolean;
+  sender: UserLite2;
+  senderDeviceId: string;
+  body: string;
+  iv: string;
+  mediaMeta: string | null;
+  mediaIv: string | null;
+  mediaSize: number | null;
+  durationMs: number | null;
+  hasMedia: boolean;
+  createdAt: string;
+  /** null when this device wasn't enrolled yet — the message stays sealed. */
+  envelope: ChatEnvelopeLite | null;
+}
+export interface ChatThreadLite {
+  id: string;
+  other: { id: string; name: string; role: Role; isPayer: boolean; isApprover: boolean; isManager: boolean };
+  lastMessageAt: string;
+  unread: number;
+  last: ChatMessageLite | null;
+}
+export interface ChatDeviceLite { id: string; userId: string; publicKey: string }
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const text = await res.text();
@@ -278,6 +317,35 @@ export const api = {
   otpList: () => req<{ messages: OtpMsg[] }>(`/api/v1/otp`),
   otpSend: (message: string) =>
     req<{ messages: OtpMsg[] }>(`/api/v1/otp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message }) }),
+  // ── end-to-end encrypted chat ──
+  chatRegisterDevice: (body: { publicKey: string; label: string | null; deviceId: string | null }) =>
+    req<{ deviceId: string }>("/api/v1/chat/devices", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    }),
+  chatPeople: () => req<{ people: ChatPerson[] }>("/api/v1/chat/people"),
+  chatThreads: (deviceId: string | null) =>
+    req<{ threads: ChatThreadLite[]; unread: number }>(
+      `/api/v1/chat/threads${deviceId ? `?deviceId=${encodeURIComponent(deviceId)}` : ""}`,
+    ),
+  chatStartThread: (userId: string) =>
+    req<{ threadId: string }>("/api/v1/chat/threads", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }),
+    }),
+  chatMessages: (threadId: string, deviceId: string) =>
+    req<{ messages: ChatMessageLite[] }>(
+      `/api/v1/chat/threads/${threadId}/messages?deviceId=${encodeURIComponent(deviceId)}`,
+    ),
+  chatThreadDevices: (threadId: string) =>
+    req<{ devices: ChatDeviceLite[] }>(`/api/v1/chat/threads/${threadId}/devices`),
+  chatSend: (form: FormData) =>
+    req<{ message: ChatMessageLite }>("/api/v1/chat/messages", { method: "POST", body: form }),
+  chatMarkRead: (threadId: string) =>
+    req<{ ok: true }>(`/api/v1/chat/threads/${threadId}/read`, { method: "POST" }),
+  chatMedia: async (messageId: string): Promise<ArrayBuffer> => {
+    const res = await fetch(`/api/v1/chat/media/${messageId}`);
+    if (!res.ok) throw new Error("Couldn't download that attachment.");
+    return res.arrayBuffer();
+  },
 };
 
 // ── UI helpers ───────────────────────────────────────────────────────
@@ -289,17 +357,61 @@ export const colorFor = (name: string): string => PEOPLE[name] ?? "#94A3B2";
 export const initials = (s: string): string =>
   s.replace("@", "").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
-export const STATUS: Record<Effective, { lab: string; cls: string; ic: string }> = {
-  AWAITING_APPROVAL: { lab: "Needs approval", cls: "st-appr", ic: "🕵️" },
-  RETURNED: { lab: "Returned", cls: "st-ret", ic: "↩️" },
-  REQUESTED: { lab: "Waiting", cls: "st-new", ic: "⏳" },
-  SCHEDULED: { lab: "Planned", cls: "st-sched", ic: "📅" },
-  PAID: { lab: "Paid", cls: "st-paid", ic: "✓" },
-  CONFIRMED: { lab: "Done", cls: "st-confirmed", ic: "✅" },
-  HOLD: { lab: "Needs info", cls: "st-hold", ic: "❓" },
-  CANCELLED: { lab: "Cancelled", cls: "st-hold", ic: "✕" },
-  OVERDUE: { lab: "Late", cls: "st-over", ic: "⚠️" },
+// Word + colour live here; the matching icon is drawn in PayTrackApp
+// (STATUS_ICON) because this module is plain TS and holds no JSX.
+export const STATUS: Record<Effective, { lab: string; cls: string }> = {
+  AWAITING_APPROVAL: { lab: "Needs approval", cls: "st-appr" },
+  RETURNED: { lab: "Returned", cls: "st-ret" },
+  REQUESTED: { lab: "Waiting", cls: "st-new" },
+  SCHEDULED: { lab: "Planned", cls: "st-sched" },
+  PAID: { lab: "Paid", cls: "st-paid" },
+  CONFIRMED: { lab: "Done", cls: "st-confirmed" },
+  HOLD: { lab: "Needs info", cls: "st-hold" },
+  CANCELLED: { lab: "Cancelled", cls: "st-hold" },
+  OVERDUE: { lab: "Late", cls: "st-over" },
 };
+
+
+// ── status filter (the All tab's dropdown) ──────────────────────────
+export type StatusFilter =
+  | "all" | "waiting" | "mine" | "awaiting" | "returned" | "requested"
+  | "scheduled" | "overdue" | "paid" | "confirmed" | "hold" | "cancelled";
+
+// Order matters: what people reach for most sits at the top.
+export const STATUS_FILTERS: [StatusFilter, string][] = [
+  ["waiting", "Waiting on someone"],
+  ["all", "Every status"],
+  ["mine", "Raised by me"],
+  ["awaiting", "Needs approval"],
+  ["returned", "Returned for changes"],
+  ["requested", "Ready to pay"],
+  ["scheduled", "Planned for a day"],
+  ["overdue", "Late"],
+  ["paid", "Paid"],
+  ["confirmed", "Done"],
+  ["hold", "Needs info"],
+  ["cancelled", "Cancelled"],
+];
+
+/** The one place that decides what each dropdown option means. */
+export function matchesStatus(p: Card, f: StatusFilter): boolean {
+  const e = p.effective;
+  switch (f) {
+    case "all": return true;
+    case "mine": return p.mine;
+    // "Waiting on someone" is the old default tab: anything still live.
+    case "waiting": return e === "REQUESTED" || e === "AWAITING_APPROVAL" || e === "RETURNED" || e === "OVERDUE";
+    case "awaiting": return p.status === "AWAITING_APPROVAL";
+    case "returned": return p.status === "RETURNED";
+    case "requested": return p.status === "REQUESTED";
+    case "scheduled": return p.status === "SCHEDULED";
+    case "overdue": return e === "OVERDUE";
+    case "paid": return p.status === "PAID";
+    case "confirmed": return p.status === "CONFIRMED";
+    case "hold": return p.status === "HOLD";
+    case "cancelled": return p.status === "CANCELLED";
+  }
+}
 
 export const fmtPaise = (paise: string): string => formatINR(BigInt(paise));
 export const wordsFromRupees = (rupees: number): string => wordsINR(BigInt(Math.round(rupees)) * 100n);
@@ -330,11 +442,42 @@ export function timeAgo(dateISO: string): string {
 }
 
 /** "27 Jul 2026, 05:10 PM" — full date + 12-hour time (India) for the timestamp. */
+// 24-hour clock throughout the app — "17 Nov 2026, 14:30", never 2:30 PM.
 export const fmtStamp = (dateISO: string): string =>
-  new Date(dateISO)
-    .toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })
-    .replace(/\bam\b/i, "AM")
-    .replace(/\bpm\b/i, "PM");
+  new Date(dateISO).toLocaleString("en-IN", {
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  });
+
+/** "14:30" — the time alone, for chat bubbles and rows. */
+export const fmtTime = (dateISO: string): string =>
+  new Date(dateISO).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+
+/** "17 Nov 2026, 14:30" with the day spelled out when it is close by. */
+export const fmtDayStamp = (dateISO: string): string => {
+  const d = new Date(dateISO);
+  const day = dayLabel(d);
+  return day === "Today" || day === "Yesterday" ? `${day}, ${fmtTime(dateISO)}` : fmtStamp(dateISO);
+};
+
+/** "Today" / "Yesterday" / "17 Nov 2026" — the date separator in a chat. */
+export function dayLabel(d: Date): string {
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOf(new Date()) - startOf(d)) / DAY);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7 && days > 0) return d.toLocaleDateString("en-IN", { weekday: "long" });
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/** WhatsApp-style right-hand stamp in a chat list: time today, else a date. */
+export const fmtListStamp = (dateISO: string): string => {
+  const d = new Date(dateISO);
+  const label = dayLabel(d);
+  if (label === "Today") return fmtTime(dateISO);
+  if (label === "Yesterday") return "Yesterday";
+  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "2-digit" });
+};
 
 /** [11,21] -> "11:00 and 21:00" — how the timing reads in the UI. */
 export function fmtHours(hours: number[]): string {

@@ -117,3 +117,39 @@ export const importRemindersSchema = z.object({
   csv: z.string().min(1, "Paste or upload some rows first.").max(500_000),
   dryRun: z.boolean().optional().default(false),
 });
+
+// ── End-to-end encrypted chat ────────────────────────────────────────
+// Bodies are base64 ciphertext as far as this process is concerned: the only
+// checks worth making are shape and size, never content.
+const b64 = z.string().regex(/^[A-Za-z0-9+/=]*$/, "must be base64");
+
+export const registerDeviceSchema = z.object({
+  // An ECDH P-256 public key, serialised JWK.
+  publicKey: z.string().min(1).max(2000),
+  label: z.string().trim().max(120).nullish(),
+  deviceId: z.string().min(1).max(64).nullish(),
+});
+
+export const startThreadSchema = z.object({
+  userId: z.string().min(1).max(64),
+});
+
+const envelopeSchema = z.object({
+  deviceId: z.string().min(1).max(64),
+  wrappedKey: b64.min(1).max(2000),
+  iv: b64.min(1).max(64),
+  ephemeral: z.string().min(1).max(2000),
+});
+
+export const postChatMessageSchema = z.object({
+  threadId: z.string().min(1).max(64),
+  deviceId: z.string().min(1).max(64),
+  kind: z.enum(["TEXT", "IMAGE", "FILE", "AUDIO"]).default("TEXT"),
+  body: b64.max(200_000).default(""),
+  iv: b64.min(1).max(64),
+  envelopes: z.array(envelopeSchema).min(1).max(64),
+  mediaMeta: b64.max(4000).optional(),
+  mediaIv: b64.max(64).optional(),
+  // Voice-note length. Not secret — it sizes the bubble before decryption.
+  durationMs: z.number().int().min(0).max(60 * 60 * 1000).optional(),
+});
